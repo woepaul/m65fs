@@ -51,6 +51,8 @@ public final class Fat32Volume implements AutoCloseable {
   /** Upper bound for a single device transfer (sectors). */
   private static final int MAX_TRANSFER_SECTORS = 128;
   private static final int MAX_DIR_SLOTS = 65536;
+  /** Sectors per read/write step when copying clusters (fewer read/write switches on the network). */
+  private static final int COPY_SECTORS = 2048;
   private static final int SECTOR = BlockDevice.SECTOR_SIZE;
 
   private final FailFastBlockDevice dev;
@@ -368,6 +370,67 @@ public final class Fat32Volume implements AutoCloseable {
     });
   }
 
+  /**
+   * Makes a fragmented file contiguous: copies its clusters (raw) into one free run, points the
+   * directory entry at the copy and then frees the old clusters. Size, timestamps and attributes
+   * are unchanged; only the start cluster moves. A contiguous file is returned as it is.
+   *
+   * <p>Same crash safety as {@link #writeContent}: until the directory entry is switched the
+   * file is untouched; an interruption leaves at worst lost clusters.
+   *
+   * @param file a current entry (re-resolve it if the volume changed since it was read)
+   * @return the updated entry
+   * @throws NoContiguousSpaceException if no free run can hold the file; nothing is changed
+   */
+  public DirEntry defragment(DirEntry file) throws IOException {
+    requireNotRoot(file);
+    if (!file.isRegularFile()) {
+      throw new FileSystemException(file.name(), null, "not a regular file");
+    }
+    return mutate(() -> {
+      List<Extent> old = fat.extents(file.firstCluster());
+      if (old.size() <= 1) {
+        return file;
+      }
+      // keep the chain's exact length (normally ceil(size / cluster size))
+      int need = old.stream().mapToInt(Extent::length).sum();
+      int bpc = boot.bytesPerCluster();
+      FatTable.FreeRun run = fat.findFreeRun(need, hint());
+      if (run.length() < need) {
+        throw new NoContiguousSpaceException(file.name(), need, run.length(), bpc);
+      }
+      int start = run.start();
+      LOG.log(Level.DEBUG, "defragment {0}: {1} fragments, {2} clusters -> {3}", file.name(), old.size(), need, start);
+
+      // 1. copy the data into clusters nobody references yet
+      int spc = boot.sectorsPerCluster();
+      ByteBuffer buf = ByteBuffer.allocate(COPY_SECTORS * SECTOR);
+      long dst = clusterLba(start);
+      for (Extent e : old) {
+        long src = clusterLba(e.first());
+        long left = (long) e.length() * spc;
+        while (left > 0) {
+          int n = (int) Math.min(COPY_SECTORS, left);
+          buf.clear().limit(n * SECTOR);
+          dev.read(src, buf);
+          dev.write(dst, buf.flip());
+          src += n;
+          dst += n;
+          left -= n;
+        }
+      }
+      // 2. the new chain, 3. switch the entry, 4. free the old clusters
+      fat.linkRun(start, need);
+      fat.flush();
+      DirEntry updated = new Dir(file.location().directoryCluster()).patch(file.location(),
+          (b, off) -> DirEntryCodec.setCluster(b, off, start));
+      fat.free(old);
+      fat.flush();
+      fsInfo.setNextFree(start + need <= boot.maxCluster() ? start + need : 2);
+      return updated;
+    });
+  }
+
   /** Writes all bytes of {@code data} as the new content. */
   public DirEntry writeContent(DirEntry file, byte[] data) throws IOException {
     return writeContent(file, java.nio.channels.Channels.newChannel(new java.io.ByteArrayInputStream(data)), data.length);
@@ -524,7 +587,17 @@ public final class Fat32Volume implements AutoCloseable {
     return done;
   }
 
-  private LocalDateTime now() {
+  /** For tests in this package (FAT surgery to create fragmented files). */
+  FatTable fatTable() {
+    return fat;
+  }
+
+  /** For tests in this package. */
+  BlockDevice device() {
+    return dev;
+  }
+
+    private LocalDateTime now() {
     return LocalDateTime.now(clock);
   }
 

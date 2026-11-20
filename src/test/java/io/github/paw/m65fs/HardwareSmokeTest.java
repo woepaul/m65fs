@@ -326,13 +326,189 @@ class HardwareSmokeTest {
           assertTrue(java.util.Arrays.equals(before, after), "drive 0 registers as before");
         }
         java.nio.file.Files.deleteIfExists(image);
-        if (original == null) {
-          System.out.println("NOTE: drive 0 still points at the deleted test image; press the MEGA65 reset "
-              + "button (hypervisor reset detaches it, nothing was mounted before)");
-        }
       }
       assertEquals(free, store.getUnallocatedSpace(), "free space unchanged");
       System.out.println("test image deleted; free space unchanged");
+      if (original == null) {
+        fs.closeAndReset(io.github.paw.m65fs.launch.MachineMode.MEGA65); // nothing was mounted: detach again
+        Thread.sleep(3000);
+        try (var check = (io.github.paw.m65fs.nio.Mega65FileSystem) java.nio.file.FileSystems.newFileSystem(uri,
+            java.util.Map.of())) {
+          System.out.printf("detached again: $D68B=%02x%n", check.peek(0xFFD368B, 1)[0]);
+          assertEquals(0, check.peek(0xFFD368B, 1)[0]);
+        }
+      }
+    }
+  }
+
+  /**
+   * Boots disks and runs programs in both modes and checks each one ran by reading a marker it
+   * leaves at $E000 (bank 0 RAM, untouched by the transfer helper): {kind, mode, nonce lo, nonce hi,
+   * extra}. Writes only {@code /M65FS.D81} (deleted again) and ends with a MEGA65-mode reset that
+   * detaches drive 0.
+   */
+  @Test
+  void bootDisksAndRunProgramsOnRealMachine(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp)
+      throws Exception {
+    assumeTrue(Boolean.getBoolean("m65.boot"), "set -Dm65.boot=true to write /M65FS.D81, boot it and run programs");
+    String t = System.getProperty("m65.target");
+    java.net.URI uri = java.net.URI.create(t == null || t.isBlank() ? "mega65://auto/" : "mega65://[" + t + "]/");
+    var rnd = new java.util.Random();
+    java.util.function.IntFunction<int[]> nonce = k -> new int[] {rnd.nextInt(256), rnd.nextInt(256)};
+
+    int[] n1 = nonce.apply(0);
+    byte[] c64Disk = c64Marker(tmp, 'D', n1);
+    int[] n2 = nonce.apply(0);
+    byte[] m65Disk = m65Marker(tmp, 'D', n2);
+    java.nio.file.Path c64Image = io.github.paw.m65fs.launch.CbmTools.d81(tmp, "c64 boot",
+        new io.github.paw.m65fs.launch.CbmTools.DiskFile("readme", 's', "skip me".getBytes()),
+        new io.github.paw.m65fs.launch.CbmTools.DiskFile("boot test", 'p', c64Disk));
+    java.nio.file.Path m65Image = io.github.paw.m65fs.launch.CbmTools.d81(tmp, "m65 boot",
+        new io.github.paw.m65fs.launch.CbmTools.DiskFile("boot test 65", 'p', m65Disk));
+
+    // Each step hands over with closeAndBoot/closeAndRun/closeAndReset (no quit in between).
+    try (var fs = open(uri)) {
+      var image = fs.getPath("/M65FS.D81");
+      assumeTrue(!java.nio.file.Files.exists(image), "/M65FS.D81 exists already");
+      java.nio.file.Files.copy(c64Image, image);
+      var boot = fs.closeAndBoot(image);
+      System.out.println("1. " + boot);
+      assertEquals(io.github.paw.m65fs.launch.MachineMode.C64, boot.mode());
+      assertEquals("BOOT TEST", boot.programName());
+    }
+    try {
+      Thread.sleep(8000);
+      try (var fs = open(uri)) {
+        assertMarker(fs, 'D', '4', n1, 0x08);
+        java.nio.file.Files.copy(m65Image, fs.getPath("/M65FS.D81"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        var boot = fs.closeAndBoot(fs.getPath("/m65fs.d81"));
+        System.out.println("2. " + boot);
+        assertEquals(io.github.paw.m65fs.launch.MachineMode.MEGA65, boot.mode());
+      }
+      Thread.sleep(8000);
+      int[] n3 = nonce.apply(0);
+      try (var fs = open(uri)) {
+        assertMarker(fs, 'D', '5', n2, -1);
+        var mode = fs.closeAndRun(c64Marker(tmp, 'P', n3), io.github.paw.m65fs.launch.Mega65Launcher.Options.defaults());
+        System.out.println("3. C64 PRG run in " + mode + " mode");
+      }
+      Thread.sleep(6000);
+      int[] n4 = nonce.apply(0);
+      try (var fs = open(uri)) {
+        assertMarker(fs, 'P', '4', n3, 0x08);
+        var mode = fs.closeAndRun(m65Marker(tmp, 'P', n4), io.github.paw.m65fs.launch.Mega65Launcher.Options.defaults());
+        System.out.println("4. MEGA65 PRG run in " + mode + " mode");
+      }
+      Thread.sleep(6000);
+      try (var fs = open(uri)) {
+        assertMarker(fs, 'P', '5', n4, -1);
+      }
+    } finally {
+      // clean up: delete the image and detach drive 0 with a MEGA65-mode reset
+      try (var fs = open(uri)) {
+        java.nio.file.Files.deleteIfExists(fs.getPath("/M65FS.D81"));
+        fs.closeAndReset(io.github.paw.m65fs.launch.MachineMode.MEGA65);
+      }
+      Thread.sleep(3000);
+      try (var fs = open(uri)) {
+        byte[] d68b = fs.peek(0xFFD368B, 1);
+        boolean gone = !java.nio.file.Files.exists(fs.getPath("/M65FS.D81"));
+        System.out.printf("cleanup: image deleted=%s, $D68B=%02x%n", gone, d68b[0]);
+        assertTrue(gone);
+        assertEquals(0, d68b[0], "drive 0 detached");
+      }
+    }
+  }
+
+  /**
+   * Fragments a test file inside the test directory on purpose (FAT surgery), then runs the Defrag
+   * tool in report mode and with --fix, and checks content, times and free space.
+   */
+  @Test
+  void defragmentInsideTestDirectory() throws Exception {
+    assumeTrue(Boolean.getBoolean("m65.write"), "set -Dm65.write=true -Dm65.testdir=NAME to write to the card");
+    String testDir = System.getProperty("m65.testdir");
+    assumeTrue(testDir != null && !testDir.isBlank(), "set -Dm65.testdir=NAME");
+    String t = System.getProperty("m65.target");
+    java.net.URI uri = java.net.URI.create(t == null || t.isBlank() ? "mega65://auto/" : "mega65://[" + t + "]/");
+    byte[] data = new byte[300_000];
+    new java.util.Random().nextBytes(data);
+    String name = "Frag Test.bin";
+    var file = "/" + testDir + "/" + name;
+
+    long free;
+    java.nio.file.attribute.FileTime mtime;
+    try (var fs = open(uri)) {
+      assertTrue(io.github.paw.m65fs.nio.Defragmenter.scan(fs).isClean(), "card has no fragmented files to begin with");
+      java.nio.file.Files.write(fs.getPath(file), data);
+      mtime = java.nio.file.Files.getLastModifiedTime(fs.getPath(file));
+      free = fs.fileStore().getUnallocatedSpace();
+    }
+    // fragment it into 3 pieces with FAT surgery
+    try (var session = RemoteSdSession.connect(target(), RemoteSdSession.Options.defaults());
+        var vol = Fat32Volume.open(new CachingBlockDevice(new io.github.paw.m65fs.remotesd.RemoteSdBlockDevice(session),
+            16, 4096))) {
+      var e = vol.resolve(java.util.List.of(testDir, name));
+      io.github.paw.m65fs.fat32.FatSurgery.split(vol, e, 20, 30);
+      io.github.paw.m65fs.fat32.FatSurgery.split(vol, vol.resolve(java.util.List.of(testDir, name)), 50, 30);
+      System.out.println("fragmented: " + vol.extents(vol.resolve(java.util.List.of(testDir, name))));
+    }
+
+    var out = new java.io.ByteArrayOutputStream();
+    int status = io.github.paw.m65fs.tools.Defrag.run(new String[0], new java.io.PrintStream(out), System.err);
+    System.out.print("--- defrag (report)\n" + out);
+    assertEquals(1, status);
+    assertTrue(out.toString().contains("1 fragmented file(s):"));
+    assertTrue(out.toString().contains("3 fragments") && out.toString().contains(name));
+
+    out.reset();
+    status = io.github.paw.m65fs.tools.Defrag.run(new String[] {"--fix"}, new java.io.PrintStream(out), System.err);
+    System.out.print("--- defrag --fix\n" + out);
+    assertEquals(0, status);
+
+    try (var fs = open(uri)) {
+      var p = fs.getPath(file);
+      assertTrue(java.util.Arrays.equals(data, java.nio.file.Files.readAllBytes(p)), "content unchanged");
+      assertEquals(mtime, java.nio.file.Files.getLastModifiedTime(p), "modification time unchanged");
+      assertTrue(java.nio.file.Files.readAttributes(p, io.github.paw.m65fs.nio.Mega65FileAttributes.class).isContiguous());
+      assertEquals(free, fs.fileStore().getUnallocatedSpace(), "free space unchanged");
+      assertTrue(io.github.paw.m65fs.nio.Defragmenter.scan(fs).isClean(), "whole card clean");
+      java.nio.file.Files.delete(p);
+      try (var s = java.nio.file.Files.list(fs.getPath("/" + testDir))) {
+        assertEquals(0, s.count(), testDir + " empty again");
+      }
+      System.out.println("verified: content, mtime, contiguous, free space; test file deleted");
+    }
+  }
+
+  private static io.github.paw.m65fs.nio.Mega65FileSystem open(java.net.URI uri) throws IOException {
+    return (io.github.paw.m65fs.nio.Mega65FileSystem) java.nio.file.FileSystems.newFileSystem(uri, java.util.Map.of());
+  }
+
+  /** C64 BASIC: marker kind,'4',nonce, PEEK(44) (= 8 only in C64 mode), border green. */
+  private static byte[] c64Marker(java.nio.file.Path tmp, char kind, int[] nonce) throws IOException {
+    return io.github.paw.m65fs.launch.CbmTools.basic(tmp, "2", String.format(
+        "10 poke57344,%d:poke57345,52:poke57346,%d:poke57347,%d:poke57348,peek(44)%n"
+            + "20 poke53280,5:print\"m65fs c64 ok\"%n", (int) kind, nonce[0], nonce[1]));
+  }
+
+  /** BASIC 65: marker kind,'5',nonce in bank 0 RAM. */
+  private static byte[] m65Marker(java.nio.file.Path tmp, char kind, int[] nonce) throws IOException {
+    return io.github.paw.m65fs.launch.CbmTools.basic(tmp, "65", String.format(
+        "10 bank0:poke57344,%d:poke57345,53:poke57346,%d:poke57347,%d%n20 print\"m65fs mega65 ok\"%n",
+        (int) kind, nonce[0], nonce[1]));
+  }
+
+  private static void assertMarker(io.github.paw.m65fs.nio.Mega65FileSystem fs, char kind, char mode, int[] nonce,
+      int extra) throws IOException {
+    byte[] m = fs.peek(0xE000, 5);
+    System.out.printf("   marker: %c %c %02x%02x %02x%n", m[0], m[1], m[2] & 0xff, m[3] & 0xff, m[4] & 0xff);
+    assertEquals(kind, (char) m[0], "program ran (kind)");
+    assertEquals(mode, (char) m[1], "mode");
+    assertEquals(nonce[0], m[2] & 0xff, "nonce: this run, not an old marker");
+    assertEquals(nonce[1], m[3] & 0xff);
+    if (extra >= 0) {
+      assertEquals(extra, m[4] & 0xff, "BASIC starts at $0801: really C64 mode");
     }
   }
 

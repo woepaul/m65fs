@@ -21,8 +21,18 @@ public enum Ethlet {
   ECHO("ethlet_echo", 1024),
   /** DMA-copies its {@code data} area to a 28-bit address and echoes the whole packet as ACK. */
   DMA_LOAD("ethlet_dma_load", 1280),
-  /** Sets the BASIC end-of-program pointer and optionally RUNs the loaded program. */
-  ALL_DONE_BASIC2("ethlet_all_done_basic2", 1024);
+  /**
+   * Resets into C64 mode: optionally mounts a D81, keeps a program loaded at $0801, sets the
+   * BASIC end-of-program pointer and RUNs it.
+   */
+  ALL_DONE_BASIC2("ethlet_all_done_basic2", 1024),
+  /**
+   * Resets into MEGA65 mode: detaches the drives, optionally mounts a D81, keeps a program
+   * loaded at $2001, sets the BASIC end-of-program pointer and RUNs it.
+   */
+  ALL_DONE_BASIC65("ethlet_all_done_basic65", 1024),
+  /** Optionally mounts a D81 and jumps to an address (no reset, no ROM initialisation). */
+  ALL_DONE_JUMP("ethlet_all_done_jump", 1024);
 
   private static final String ENTRY_LABEL = "entry";
 

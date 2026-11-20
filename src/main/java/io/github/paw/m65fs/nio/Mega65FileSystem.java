@@ -3,8 +3,12 @@ package io.github.paw.m65fs.nio;
 import io.github.paw.m65fs.block.BlockDevice;
 import io.github.paw.m65fs.block.CachingBlockDevice;
 import io.github.paw.m65fs.block.ImageFileBlockDevice;
+import io.github.paw.m65fs.etherload.Etherload;
 import io.github.paw.m65fs.fat32.DirEntry;
 import io.github.paw.m65fs.fat32.Fat32Volume;
+import io.github.paw.m65fs.launch.D81Image;
+import io.github.paw.m65fs.launch.MachineMode;
+import io.github.paw.m65fs.launch.Mega65Launcher;
 import io.github.paw.m65fs.remotesd.RemoteSdBlockDevice;
 import io.github.paw.m65fs.remotesd.RemoteSdSession;
 import io.github.paw.m65fs.transport.Mega65Locator;
@@ -274,9 +278,97 @@ public final class Mega65FileSystem extends FileSystem {
    */
   public boolean mountD81(Path image) throws IOException {
     ensureOpen();
-    if (session == null) {
-      throw new UnsupportedOperationException("mounting needs a connection to a MEGA65");
+    requireSession("mounting");
+    String name = mountableName(image);
+    volume.flush();
+    return session.mount(name);
+  }
+
+  /**
+   * Boots a disk image: ends the session (as {@link #close()} does, so the MEGA65 is reset),
+   * then mounts the image, resets into C64 or MEGA65 mode and loads and runs the first program
+   * on it. The mode follows the program's load address ($2001 = MEGA65, otherwise C64 as with
+   * {@code GO64}). The image must be in the root directory and contiguous (see
+   * {@link #mountD81}).
+   *
+   * <pre>{@code
+   * Files.copy(Path.of("game.d81"), fs.getPath("/GAME.D81"), REPLACE_EXISTING);
+   * fs.closeAndBoot(fs.getPath("/GAME.D81"));
+   * }</pre>
+   *
+   * @return what was started
+   * @throws IOException if the image has no program; the file system then stays open
+   */
+  public Mega65Launcher.Boot closeAndBoot(Path image) throws IOException {
+    return closeAndBoot(image, null);
+  }
+
+  /**
+   * Like {@link #closeAndBoot(Path)} with an explicit mode ({@code null} = by load address).
+   */
+  public Mega65Launcher.Boot closeAndBoot(Path image, MachineMode mode) throws IOException {
+    ensureOpen();
+    requireSession("booting");
+    Mega65Path p = Mega65Path.cast(image).toAbsolutePath().normalize();
+    String name = mountableName(p);
+    Mega65Launcher.Boot boot;
+    try (var ch = provider.newByteChannel(p, Set.of(java.nio.file.StandardOpenOption.READ))) {
+      boot = Mega65Launcher.plan(name, D81Image.read(ch), mode, null);
     }
+    Target target = endSessionForLaunch();
+    Mega65Launcher.boot(target, boot, Etherload.Video.UNCHANGED);
+    return boot;
+  }
+
+  /**
+   * Ends the session and resets the MEGA65 into {@code mode} with no disk image attached (a
+   * MEGA65-mode reset detaches drive 0; the reset done by a plain {@link #close()} keeps it).
+   */
+  public void closeAndReset(MachineMode mode) throws IOException {
+    ensureOpen();
+    requireSession("resetting");
+    Target target = endSessionForLaunch();
+    Mega65Launcher.reset(target, mode, null, Etherload.Video.UNCHANGED);
+  }
+
+  /**
+   * Closes the file system without the quit's reset: the launcher takes over the machine right
+   * away, and the hypervisor may ignore its trigger for a while after a reset.
+   */
+  private Target endSessionForLaunch() throws IOException {
+    Target target = session.target();
+    session.setQuitOnClose(false);
+    close();
+    return target;
+  }
+
+  /**
+   * Ends the session (as {@link #close()} does) and runs a program file straight from memory
+   * (see {@link Mega65Launcher#runPrg}): $0801 programs in C64 mode, $2001 programs in MEGA65
+   * mode. Nothing is written to the SD card.
+   *
+   * @return the mode the program runs in ({@code null} for a jump)
+   */
+  public MachineMode closeAndRun(byte[] prg, Mega65Launcher.Options options) throws IOException {
+    ensureOpen();
+    requireSession("running programs");
+    Etherload.loadAddress(prg); // validate before closing
+    Target target = session.target();
+    if (options.mount() != null) {
+      mountableName(getPath("/" + options.mount()));
+    }
+    endSessionForLaunch();
+    return Mega65Launcher.runPrg(target, prg, options);
+  }
+
+  private void requireSession(String what) {
+    if (session == null) {
+      throw new UnsupportedOperationException(what + " needs a connection to a MEGA65");
+    }
+  }
+
+  /** Checks that the hypervisor can mount the image and returns the name to ask for. */
+  private String mountableName(Path image) throws IOException {
     Mega65Path p = Mega65Path.cast(image).toAbsolutePath().normalize();
     if (p.getNameCount() != 1) {
       throw new IOException("only images in the root directory can be mounted: " + p);
@@ -293,8 +385,7 @@ public final class Mega65FileSystem extends FileSystem {
     if (name.length() > 63 || !name.chars().allMatch(c -> c >= 0x20 && c < 0x7f)) {
       throw new IOException("name must be printable ASCII of at most 63 characters to be mounted: " + name);
     }
-    volume.flush();
-    return session.mount(name);
+    return name;
   }
 
   /** Reads 1..256 bytes of MEGA65 memory (28-bit address). */

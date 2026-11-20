@@ -20,8 +20,10 @@ public final class Etherload {
 
   /** {@code ETHERNET_TIMEOUT} in mega65_ftp.c. */
   public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(3);
-  /** Load address of a C64/C65 BASIC program. */
+  /** Load address of a C64 BASIC program. */
   public static final int BASIC_START = 0x0801;
+  /** Load address of a MEGA65 (BASIC 65) program. */
+  public static final int BASIC65_START = 0x2001;
   /** Payload bytes per DMA load packet (mega65_ftp uses 1 KiB blocks). */
   public static final int BLOCK_SIZE = 1024;
   /** Window size used during bootstrap ({@code queue_length} default in etherload_common.c). */
@@ -58,10 +60,44 @@ public final class Etherload {
     return window;
   }
 
-  /** Multicasts the magic packet that traps the hypervisor into Ethernet remote control. */
+  /**
+   * Multicasts the magic packet that traps the hypervisor into Ethernet remote control. Targets
+   * without a network interface (simulators on loopback) get it unicast instead.
+   */
   public void triggerHyperrupt() throws IOException {
-    window.link().sendAllNodes(triggerPacket());
+    if (window.link().target().networkInterface() != null) {
+      window.link().sendAllNodes(triggerPacket());
+    } else {
+      window.link().send(triggerPacket());
+    }
     sleep(Duration.ofMillis(10));
+  }
+
+  /**
+   * Traps the hypervisor and waits until it executes ethlets (ping). The trigger is repeated
+   * if a ping goes unanswered, e.g. while the MEGA65 is still resetting (up to about 15 s).
+   *
+   * @return a ready instance on a fresh window
+   * @throws Mega65TimeoutException with a hint if the MEGA65 never answers
+   */
+  public static Etherload connect(UdpLink link) throws IOException {
+    // Right after a reset the hypervisor can ignore the trigger for several seconds.
+    Duration[] waits = {Duration.ofMillis(1500), Duration.ofMillis(1500), Duration.ofSeconds(3),
+        Duration.ofSeconds(4), Duration.ofSeconds(5)};
+    for (int attempt = 0; ; attempt++) {
+      Etherload e = on(link);
+      e.triggerHyperrupt();
+      try {
+        e.ping(waits[attempt]);
+        return e;
+      } catch (Mega65TimeoutException ex) {
+        if (attempt == waits.length - 1) {
+          throw new Mega65TimeoutException("no response from MEGA65 at " + link.target()
+              + " (is remote mode active and ETHLOAD.M65 in the SD card root?)");
+        }
+        LOG.log(Level.DEBUG, "no answer to trigger, retrying");
+      }
+    }
   }
 
   static byte[] triggerPacket() {
@@ -116,12 +152,158 @@ public final class Etherload {
    */
   public void allDoneBasic2(int dataEndAddress, boolean run, boolean cartSignatureDetection, Duration timeout)
       throws IOException {
+    singleCommand(basic2Packet(dataEndAddress, run, new Reset(null, Video.UNCHANGED, cartSignatureDetection)),
+        timeout);
+  }
+
+  /** PAL/NTSC switch done by the reset ethlets. */
+  public enum Video {
+    UNCHANGED(0x00), PAL(0x01), NTSC(0xff);
+
+    final int code;
+
+    Video(int code) {
+      this.code = code;
+    }
+  }
+
+  /**
+   * Options of the reset ethlets.
+   *
+   * @param mount D81 image in the SD card root to attach as drive 0, or {@code null}
+   * @param video video standard to switch to
+   * @param cartridgeDetection honour a CBM80 cartridge signature at $8004 on reset
+   */
+  public record Reset(String mount, Video video, boolean cartridgeDetection) {
+    public Reset {
+      Objects.requireNonNull(video);
+    }
+
+    public static Reset defaults() {
+      return new Reset(null, Video.UNCHANGED, false);
+    }
+
+    public Reset withMount(String image) {
+      return new Reset(image, video, cartridgeDetection);
+    }
+
+    public Reset withVideo(Video v) {
+      return new Reset(mount, v, cartridgeDetection);
+    }
+  }
+
+  /**
+   * Writes a program file (2-byte load address + data) to memory at its load address and waits
+   * for all acks.
+   *
+   * @return the end address (load address + data length), as BASIC's end-of-program pointer
+   */
+  public int writeProgram(byte[] prg) throws IOException {
+    int load = loadAddress(prg);
+    int len = prg.length - 2;
+    writeMemory(load, prg, 2, len, DEFAULT_TIMEOUT);
+    awaitAll(DEFAULT_TIMEOUT);
+    return load + len;
+  }
+
+  /** The load address of a program file; checks that it fits below $10000. */
+  public static int loadAddress(byte[] prg) {
+    if (prg.length < 3) {
+      throw new IllegalArgumentException("program file too short");
+    }
+    int load = WindowProtocol.le16(prg, 0);
+    if (load + prg.length - 2 > 0x10000) {
+      throw new IllegalArgumentException(String.format("program at $%04X with %d bytes extends beyond $FFFF",
+          load, prg.length - 2));
+    }
+    return load;
+  }
+
+  /**
+   * Resets into C64 mode ({@link Ethlet#ALL_DONE_BASIC2}).
+   *
+   * @param programEnd end address of a BASIC program loaded at $0801 (kept across the reset), or
+   *     0 for none
+   * @param run type RUN after the reset
+   */
+  public void resetToC64(int programEnd, boolean run, Reset options) throws IOException {
+    singleCommand(basic2Packet(programEnd, run, options), Duration.ofSeconds(2));
+  }
+
+  private static byte[] basic2Packet(int programEnd, boolean run, Reset options) {
     Ethlet e = Ethlet.ALL_DONE_BASIC2;
     byte[] p = e.newPacket();
-    WindowProtocol.putLe16(p, e.offset("data_end_address"), dataEndAddress);
+    WindowProtocol.putLe16(p, e.offset("data_end_address"), programEnd);
     p[e.offset("do_run")] = (byte) (run ? 1 : 0);
-    p[e.offset("enable_cart_signature")] = (byte) (cartSignatureDetection ? 1 : 0);
-    singleCommand(p, timeout);
+    p[e.offset("enable_cart_signature")] = (byte) (options.cartridgeDetection() ? 1 : 0);
+    p[e.offset("restore_prg")] = (byte) (programEnd != 0 ? 1 : 0);
+    p[e.offset("set_video_mode")] = (byte) options.video().code;
+    putImageName(p, e.offset("d81filename"), options.mount(), 63);
+    return p;
+  }
+
+  /**
+   * Resets into MEGA65 mode ({@link Ethlet#ALL_DONE_BASIC65}). This always detaches the current
+   * disk images first, so a reset without {@code mount} leaves drive 0 empty.
+   *
+   * @param programEnd end address of a BASIC 65 program loaded at $2001 (kept across the reset),
+   *     or 0 for none
+   * @param run type RUN after the reset
+   */
+  public void resetToMega65(int programEnd, boolean run, Reset options) throws IOException {
+    Ethlet e = Ethlet.ALL_DONE_BASIC65;
+    byte[] p = e.newPacket();
+    int autostart = e.offset("autostart"); // filesize (LE16), do_run, enable_cart_signature
+    WindowProtocol.putLe16(p, autostart, programEnd);
+    p[autostart + 2] = (byte) (run ? 1 : 0);
+    p[autostart + 3] = (byte) (options.cartridgeDetection() ? 1 : 0);
+    p[e.offset("restore_prg")] = (byte) (programEnd != 0 ? 1 : 0);
+    p[e.offset("set_video_mode")] = (byte) options.video().code;
+    putImageName(p, e.offset("d81filename"), options.mount(), 63);
+    singleCommand(p, Duration.ofSeconds(2));
+  }
+
+  /**
+   * Optionally mounts a D81 (name of at most 15 characters) and jumps to {@code address}
+   * ({@link Ethlet#ALL_DONE_JUMP}); no reset, the KERNAL is not initialised.
+   */
+  public void jump(int address, String mount) throws IOException {
+    if (address < 0 || address > 0xffff) {
+      throw new IllegalArgumentException("jump address must be $0000-$FFFF");
+    }
+    Ethlet e = Ethlet.ALL_DONE_JUMP;
+    byte[] p = e.newPacket();
+    WindowProtocol.putLe16(p, e.offset("jump_addr") + 1, address); // operand of JMP
+    putImageName(p, e.offset("d81filename"), mount, 15);
+    singleCommand(p, Duration.ofSeconds(2));
+  }
+
+  /** Longest disk image name the reset ethlets take; the jump ethlet takes 15. */
+  public static final int MAX_IMAGE_NAME = 63;
+
+  /** Validates a disk image name for the ethlets (printable ASCII, at most {@code maxLen}). */
+  public static void checkImageName(String name, int maxLen) {
+    if (name.isEmpty() || name.length() > maxLen || !name.chars().allMatch(c -> c >= 0x20 && c < 0x7f)) {
+      throw new IllegalArgumentException("disk image name must be 1.." + maxLen + " printable ASCII characters: "
+          + name);
+    }
+  }
+
+  /**
+   * Hyppo's dos_setname expects the name as the ethlets get it from etherload.c: letters with
+   * their case swapped (PETSCII), NUL-terminated.
+   */
+  static void putImageName(byte[] p, int off, String name, int maxLen) {
+    if (name == null) {
+      return;
+    }
+    checkImageName(name, maxLen);
+    for (int i = 0; i < name.length(); i++) {
+      int c = name.charAt(i);
+      int upper = c & 0xdf;
+      p[off + i] = (byte) (upper >= 'A' && upper <= 'Z' ? c ^ 0x20 : c);
+    }
+    p[off + name.length()] = 0;
   }
 
   /**
@@ -132,9 +314,7 @@ public final class Etherload {
    * @throws Mega65TimeoutException with a hint if the MEGA65 does not answer the ping
    */
   public void bootstrap(byte[] prg) throws IOException {
-    if (prg.length < 3 || WindowProtocol.le16(prg, 0) != BASIC_START) {
-      throw new IllegalArgumentException("not a program file loading at $0801");
-    }
+    checkHelper(prg);
     triggerHyperrupt();
     try {
       ping(DEFAULT_TIMEOUT);
@@ -142,12 +322,27 @@ public final class Etherload {
       throw new Mega65TimeoutException("no response from MEGA65 at " + window.link().target()
           + " (is remote mode active and ETHLOAD.M65 in the SD card root?)");
     }
+    startHelper(prg);
+  }
+
+  /**
+   * Uploads {@code prg} (a program file loading at {@value #BASIC_START}) and RUNs it in C64
+   * mode; the hypervisor must already execute ethlets (see {@link #connect}).
+   */
+  public void startHelper(byte[] prg) throws IOException {
+    checkHelper(prg);
     LOG.log(Level.DEBUG, "uploading helper routine ({0} bytes)", prg.length - 2);
     writeMemory(BASIC_START, prg, 2, prg.length - 2, DEFAULT_TIMEOUT);
     awaitAll(DEFAULT_TIMEOUT);
     // mega65_ftp.c patches data_end_address with $0801, not with the real end address.
     allDoneBasic2(BASIC_START, true, false, Duration.ofSeconds(2));
     LOG.log(Level.DEBUG, "helper routine started");
+  }
+
+  private static void checkHelper(byte[] prg) {
+    if (prg.length < 3 || WindowProtocol.le16(prg, 0) != BASIC_START) {
+      throw new IllegalArgumentException("not a program file loading at $0801");
+    }
   }
 
   /** Swaps in the single-command protocol for one packet, like {@code ethl_single_command}. */

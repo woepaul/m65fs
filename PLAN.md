@@ -321,6 +321,8 @@ library, not a best effort:
 | M4 ✅ | `fat32` write (create, write, truncate, delete, mkdir, rmdir, rename/move, FSInfo) | image tests + `fsck.fat`; hardware round‑trip |
 | M5 ✅ | `nio` provider complete (paths, channels, streams, attrs, FileStore, URI handling) + `mountD81` | `Files.*` API tests on image‑backed FS |
 | M6 ✅ | Hardening: timeouts/errors as exceptions, close semantics, logging via `System.Logger`, README with usage | review |
+| M7 ✅ | Launching: boot D81s and run PRGs in C64 (GO64) and MEGA65 mode, reset/detach | hardware markers |
+| M8 ✅ | Defragmentation: scan report + optional fix, `Defrag` CLI (jar main class) | image tests + hardware (file fragmented on purpose) |
 
 M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDevice`.
 
@@ -330,6 +332,19 @@ M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDe
   helper upload (our own cc65 build), RUN, then a minimal hello + quit — 0.6 s total.
   Hardware bug found: the trigger magic starts with the *byte* `0x65`, not the characters
   "65" (`magic_string` comment "65 G S" is misleading); pinned by a unit test.
+* **M8 status (2026-11-20):** `Fat32Volume.defragment` (raw cluster copy into one free run,
+  entry switched, old clusters freed; times/attributes/size kept), `nio.Defragmenter`
+  (scan → report, defragment → per-file results, smallest first, NO_SPACE retried once),
+  `tools.Defrag` CLI (report by default, `--fix`, `--image`). Scan of the real card: 275 files,
+  0 fragmented, `/amiga/adf` directory in 2 fragments; ~5 s. Not computing the largest free run
+  in the scan saved ~30 s per scan (it reads the whole 27 MiB FAT).
+* **M7 status (2026-11-20):** `launch` package. Ethlets `all_done_basic65` and
+  `all_done_jump` added; own `c64boot.a65` loader (LOAD"name",8,1 + RUN via keyboard buffer,
+  runs from $0334). MEGA65-mode disk boot uses a BASIC 65 stub `MOUNT"img":RUN"name"`: with a
+  disk attached by the reset ethlet the ROM does not start the program in memory (hardware
+  finding). After a reset the hypervisor may ignore the trigger for > 6 s; `Etherload.connect`
+  retries for ~15 s and the `closeAnd…` methods skip the session's quit. A MEGA65-mode reset
+  detaches drive 0. Verified on hardware with RAM markers (nonce + PEEK(44) for C64 mode).
 * **M6 status (2026-11-20):** project renamed m65lib → m65fs (artifact, package
   `io.github.paw.m65fs`, module). Failure handling: `FailFastBlockDevice` poisons a
   `Fat32Volume` after the first device error (cached FAT/directories may be stale);

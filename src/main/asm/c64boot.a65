@@ -1,0 +1,86 @@
+; c64boot -- disk boot loader for C64 mode (GO64), part of m65fs.
+;
+; Uploaded to $0801 and RUN by the all_done_basic2 ethlet after it has mounted a D81 and
+; reset the MEGA65 into C64 mode. Does what a user would type:
+;
+;     LOAD"<name>",8,1
+;     RUN
+;
+; It copies itself to $0334 first (the program it loads usually overwrites $0801), clears the
+; BASIC program at $0801 (so RUN does nothing if the file does not load there), loads the file
+; with the KERNAL, sets the end-of-program pointer like a direct-mode LOAD, types RUN<cr>
+; into the keyboard buffer and returns to BASIC's READY loop. Programs that take over during
+; the load (autostart tricks) simply never return.
+;
+; The host patches the file name: the last 17 bytes of the PRG are <length> <16 name bytes>
+; (PETSCII, as in the disk directory).
+;
+; Assemble with Ophis: ophis c64boot.a65 -o c64boot.prg
+
+.alias SETMSG $ff90
+.alias SETLFS $ffba
+.alias SETNAM $ffbd
+.alias LOAD $ffd5
+.alias LINKPRG $a533         ; BASIC: relink program lines
+.alias READY $a474          ; BASIC: print READY. and enter the main loop
+.alias KEYBUF $0277
+.alias NDX $c6
+.alias VARTAB $2d
+
+        .word $0801     ; PRG load address
+        .org $0801
+basic:  .word basic_end
+        .word 10
+        .byte $9e, "2061", 0    ; 10 SYS2061
+basic_end:
+        .word 0
+
+start:                  ; $080d
+        ldx #[stub_end - stub]
+*       lda stub_image-1,x
+        sta stub-1,x
+        dex
+        bne -
+        jmp stub
+
+stub_image:
+        .org $0334      ; unused bytes + cassette buffer, not touched by disk loads
+stub:
+        lda #0
+        sta $0801       ; NEW: no BASIC program unless the file brings one
+        sta $0802
+        lda #$80
+        jsr SETMSG      ; show SEARCHING FOR / LOADING
+        lda name_len
+        ldx #<name
+        ldy #>name
+        jsr SETNAM
+        lda #1          ; logical file 1
+        ldx #8          ; device 8
+        ldy #1          ; secondary address 1: load to the file's own address
+        jsr SETLFS
+        lda #0          ; load (not verify)
+        jsr LOAD
+        bcs done        ; error: back to READY (the KERNAL printed the message)
+        stx VARTAB      ; end of program, as LOAD does in direct mode
+        sty VARTAB+1
+        jsr LINKPRG
+        ldx #3
+*       lda run_keys,x
+        sta KEYBUF,x
+        dex
+        bpl -
+        lda #4
+        sta NDX
+done:
+        jmp READY
+
+run_keys:
+        .byte "RUN", 13
+name_len:
+        .byte 1
+name:
+        .byte "*"
+        .advance name + 16, $a0
+stub_end:
+        .checkpc $03fc

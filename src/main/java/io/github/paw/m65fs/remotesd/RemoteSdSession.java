@@ -79,19 +79,29 @@ public final class RemoteSdSession implements AutoCloseable {
   private Mode mode = Mode.IDLE;
   private int batchCounter;
   private boolean closed;
+  private boolean quitOnClose;
   private IOException failure;
 
   private RemoteSdSession(SlidingWindow window, Options options) {
     this.window = window;
     this.options = options;
     this.timeout = options.timeout();
+    this.quitOnClose = options.quitOnClose();
+  }
+
+  /**
+   * Whether {@link #close()} sends quit (resetting the MEGA65). Turned off when the machine is
+   * taken over right afterwards anyway (booting a disk), which saves a reset.
+   */
+  public synchronized void setQuitOnClose(boolean quit) {
+    this.quitOnClose = quit;
   }
 
   /** Bootstraps remotesd_eth on {@code target} and opens a session. */
   public static RemoteSdSession connect(Target target, Options options) throws IOException {
     UdpLink link = UdpLink.open(target);
     try {
-      Etherload.on(link).bootstrap(options.helperProgram());
+      Etherload.connect(link).startHelper(options.helperProgram());
       return attach(link, options);
     } catch (IOException | RuntimeException e) {
       link.close();
@@ -258,7 +268,7 @@ public final class RemoteSdSession implements AutoCloseable {
     }
     closed = true;
     try {
-      if (options.quitOnClose()) {
+      if (quitOnClose) {
         if (failure == null) {
           control(new Request.Quit());
         } else if (!quitBestEffort()) {
