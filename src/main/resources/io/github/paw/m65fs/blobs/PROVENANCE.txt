@@ -1,0 +1,7 @@
+mega65-tools: 44c63d2
+built: 2026-11-20T16:29:51Z
+cc65: cl65 V2.19 - N/A
+3033d98673c877c629472c84b24b1b1d3b7b480f14b1b2b65867d66dd0a8a312  ethlet_all_done_basic2.bin
+e12c8db353206e42713a4da79cce5f64849318ee58e6bce18d296b426f960cc9  ethlet_dma_load.bin
+7b5a3ddd787fbd659794e4d0f558f27ac48951842dec71dda17be0c89e091386  ethlet_echo.bin
+f6c340e05e0bc12c63e92a848a0d0c22670f308f45c856d9ebad46a7a1792aee  remotesd_eth.prg
