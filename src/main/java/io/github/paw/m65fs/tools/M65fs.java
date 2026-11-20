@@ -38,7 +38,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * The m65 command line tools, modelled on the Unix core utilities: {@code m65.ls},
+ * The m65 command line tools, modelled on the Unix core utilities: {@code m65.ls}, {@code m65.tree},
  * {@code m65.cp}, {@code m65.mv}, {@code m65.rm}, {@code m65.mkdir}, {@code m65.cat},
  * {@code m65.stat}, {@code m65.df}, plus {@code m65.boot}, {@code m65.run}, {@code m65.reset},
  * {@code m65.mount}, {@code m65.peek}, {@code m65.discover} and {@code m65.defrag}.
@@ -60,7 +60,7 @@ public final class M65fs {
   public static final String CARD_PREFIX = "m65:";
 
   private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
-  private static final List<String> COMMANDS = List.of("ls", "cp", "mv", "rm", "mkdir", "cat", "stat", "df",
+  private static final List<String> COMMANDS = List.of("ls", "tree", "cp", "mv", "rm", "mkdir", "cat", "stat", "df",
       "defrag", "boot", "run", "reset", "mount", "peek", "discover");
 
   private final PrintStream out;
@@ -142,6 +142,7 @@ public final class M65fs {
     try {
       int s = switch (cmd) {
         case "ls" -> ls(a);
+        case "tree" -> tree(a);
         case "cp" -> cp(a);
         case "mv" -> mv(a);
         case "rm" -> rm(a);
@@ -247,6 +248,104 @@ public final class M65fs {
     String when = TIME.format(at.lastModifiedTime().toInstant().atZone(ZoneId.systemDefault()));
     out.printf("%s %10d  %s  %s%s%n", at.isDirectory() ? "d" : "-", at.isDirectory() ? 0 : at.size(), when, name,
         at.isContiguous() || at.isDirectory() ? "" : "   [fragmented]");
+  }
+
+  /** A file or directory for {@code tree}, with the totals of everything below it. */
+  private record Node(String name, boolean dir, long size, String date, boolean fragmented, List<Node> children,
+      long totalSize, int files, int dirs) {}
+
+  /** {@code tree [-d] [-L LEVEL] [DIR]}: like tree(1), with sizes, dates and directory totals. */
+  private int tree(List<String> a) throws IOException {
+    String level = option(a, "-L");
+    int maxDepth = level == null ? Integer.MAX_VALUE : Integer.parseInt(level);
+    if (maxDepth < 1) {
+      throw new Failure("-L needs a level of 1 or more");
+    }
+    Set<Character> f = flags(a, "d");
+    boolean dirsOnly = f.contains('d');
+    String dir = a.isEmpty() ? "/" : a.removeFirst();
+    noOperands(a);
+    try (var fs = openCard(true)) {
+      Path root = fs.getPath(cardPath(dir));
+      if (!Files.isDirectory(root)) {
+        throw new Failure("'" + dir + "': Not a directory");
+      }
+      Node top = node(root, "");
+      List<String[]> rows = new ArrayList<>();
+      treeRows(top, "", 1, maxDepth, dirsOnly, rows);
+      int width = Math.min(72, rows.stream().mapToInt(r -> r[0].length()).max().orElse(0)) + 2;
+      out.println(root.toRealPath());
+      for (String[] r : rows) {
+        out.println(r[1].isEmpty() ? r[0] : String.format("%-" + width + "s%s", r[0], r[1]));
+      }
+      out.println();
+      String free = "";
+      if (root.toAbsolutePath().getNameCount() == 0) {
+        Mega65FileStore store = fs.fileStore();
+        free = String.format(", volume '%s' %s free of %s", store.name(), humanSize(store.getUnallocatedSpace()),
+            humanSize(store.getTotalSpace()));
+      }
+      out.printf("%d director%s, %d file%s, %s%s%n", top.dirs(), top.dirs() == 1 ? "y" : "ies", top.files(),
+          top.files() == 1 ? "" : "s", humanSize(top.totalSize()), free);
+      return 0;
+    }
+  }
+
+  private Node node(Path p, String name) throws IOException {
+    var at = Files.readAttributes(p, Mega65FileAttributes.class);
+    String date = TIME.format(at.lastModifiedTime().toInstant().atZone(ZoneId.systemDefault()));
+    if (!at.isDirectory()) {
+      return new Node(name, false, at.size(), date, !at.isContiguous(), List.of(), at.size(), 1, 0);
+    }
+    List<Path> list;
+    try (Stream<Path> s = Files.list(p)) {
+      list = s.toList();
+    }
+    List<Node> children = new ArrayList<>();
+    long total = 0;
+    int files = 0;
+    int dirs = 0;
+    for (Path c : list) {
+      Node n = node(c, c.getFileName().toString());
+      children.add(n);
+      total += n.totalSize();
+      files += n.files();
+      dirs += n.dirs() + (n.dir() ? 1 : 0);
+    }
+    children.sort(Comparator.comparing((Node n) -> !n.dir()).thenComparing(n -> n.name().toLowerCase(Locale.ROOT)));
+    return new Node(name, true, 0, date, false, children, total, files, dirs);
+  }
+
+  private static void treeRows(Node dir, String prefix, int depth, int maxDepth, boolean dirsOnly,
+      List<String[]> rows) {
+    List<Node> shown = dir.children().stream().filter(n -> n.dir() || !dirsOnly).toList();
+    for (int i = 0; i < shown.size(); i++) {
+      Node n = shown.get(i);
+      boolean last = i == shown.size() - 1;
+      String label = prefix + (last ? "└── " : "├── ") + n.name() + (n.dir() ? "/" : "");
+      String info = n.dir()
+          ? humanSize(n.totalSize()) + " in " + n.files() + " file" + (n.files() == 1 ? "" : "s")
+          : humanSize(n.size()) + "   " + n.date() + (n.fragmented() ? "   [fragmented]" : "");
+      rows.add(new String[] {label, info});
+      if (n.dir() && depth < maxDepth) {
+        treeRows(n, prefix + (last ? "    " : "│   "), depth + 1, maxDepth, dirsOnly, rows);
+      }
+    }
+  }
+
+  /** 1234567 -> "1.2 MiB". */
+  static String humanSize(long bytes) {
+    if (bytes < 1024) {
+      return bytes + " B";
+    }
+    String[] units = {"KiB", "MiB", "GiB", "TiB"};
+    double v = bytes;
+    int u = -1;
+    while (v >= 1024 && u < units.length - 1) {
+      v /= 1024;
+      u++;
+    }
+    return String.format(Locale.ROOT, "%.1f %s", v, units[u]);
   }
 
   /** {@code cp [-rRnfpv] SOURCE... DEST} with GNU cp semantics; card paths are m65:/... */
@@ -806,6 +905,7 @@ public final class M65fs {
   static String usageOf(String cmd) {
     return switch (cmd) {
       case "ls" -> "m65.ls [-lRd] [PATH...]";
+      case "tree" -> "m65.tree [-d] [-L LEVEL] [DIR]";
       case "cp" -> "m65.cp [-rRnfpv] SOURCE... DEST      (card paths: m65:/PATH)";
       case "mv" -> "m65.mv [-nfv] SOURCE... DEST";
       case "rm" -> "m65.rm [-rRfv] PATH...";
@@ -831,6 +931,8 @@ public final class M65fs {
 
         files (card paths: m65:/PATH; tools that only use the card also take plain /PATH)
           m65.ls [-lRd] [PATH...]             list; -l sizes/times/[fragmented], -R recursive
+          m65.tree [-d] [-L LEVEL] [DIR]      tree view with sizes, dates, directory totals;
+                                              -d directories only, -L depth
           m65.cp [-rRnfpv] SOURCE... DEST     copy like cp: computer <-> card, card -> card;
                                               -r directories, -n keep existing, -p keep times;
                                               card files are always written contiguously

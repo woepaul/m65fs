@@ -171,6 +171,39 @@ class M65fsCliTest {
   }
 
   @Test
+  void treeShowsSizesTotalsAndStructure() throws IOException {
+    Path game = localTree();
+    assertEquals(0, m65("cp", "-r", game.toString(), "m65:/"));
+    assertEquals(0, m65("tree"), err.toString());
+    String t = out().replaceAll("\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d", "DATE");
+    assertEquals("""
+        /
+        └── My Game/               804.9 KiB in 3 files
+            ├── disks/             804.9 KiB in 2 files
+            │   ├── extra/         4.9 KiB in 1 file
+            │   │   └── bonus.prg  4.9 KiB   DATE
+            │   └── Disk 1.d81     800.0 KiB   DATE
+            ├── empty/             0 B in 0 files
+            └── readme.txt         13 B   DATE
+
+        """, t.substring(0, t.lastIndexOf("\n\n") + 2));
+    assertTrue(t.matches("(?s).*\\n4 directories, 3 files, 804\\.9 KiB, volume 'M65TEST' [\\d.]+ MiB free of [\\d.]+ MiB\\n"),
+        t);
+    assertEquals(0, m65("tree", "-d", "-L", "2", "/my game"));
+    assertEquals("""
+        /My Game
+        ├── disks/      804.9 KiB in 2 files
+        │   └── extra/  4.9 KiB in 1 file
+        └── empty/      0 B in 0 files
+
+        3 directories, 3 files, 804.9 KiB
+        """, out());
+    assertEquals(0, m65("tree", "-d", "-L", "1", "/my game"));
+    assertTrue(out().startsWith("/My Game\n├── disks/  804.9 KiB in 2 files\n└── empty/  0 B in 0 files\n"), out());
+    assertEquals(1, m65("tree", "/my game/readme.txt"));
+  }
+
+  @Test
   void commandFromProgramName() {
     assertArrayEquals(new String[] {"ls", "-l"}, M65fs.withInvokedCommand("/usr/local/bin/m65.ls", new String[] {"-l"}));
     assertArrayEquals(new String[] {"ls"}, M65fs.withInvokedCommand("m65", new String[] {"ls"}));

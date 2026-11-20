@@ -152,6 +152,7 @@ GraalVM `native-image`, so they start in milliseconds:
 tools/install.sh                     # build the native binary, install m65 + m65.* into ~/.local/bin
 
 m65.ls -l /GAMES                     # list (-l: size, time, [fragmented]; -R recursive)
+m65.tree > card.txt                  # tree view with sizes, dates and directory totals
 m65.cp -r ./mygame m65:/GAMES/       # copy like cp: card paths are m65:/PATH
 m65.cp -rp m65:/GAMES ./backup       # whole trees out, keeping times
 m65.mv /old.d81 /new.d81             # on the card
@@ -162,7 +163,7 @@ m65.reset                            # MEGA65 mode, drive 0 detached
 m65.defrag [--fix]                   # report / fix fragmented files
 ```
 
-The full set is `m65.ls`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
+The full set is `m65.ls`, `m65.tree`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
 `m65.df`, `m65.defrag`, `m65.boot`, `m65.run`, `m65.reset`, `m65.mount`, `m65.peek` and
 `m65.discover`. Each takes `--help`, and `m65 help` lists them all.
 

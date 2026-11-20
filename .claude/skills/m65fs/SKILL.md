@@ -11,7 +11,7 @@ card contiguously** (some MEGA65 cores and the hypervisor cannot use fragmented 
 
 ## The tools
 
-The m65 tools follow the Unix core utilities: `m65.ls`, `m65.cp`, `m65.mv`, `m65.rm`,
+The m65 tools follow the Unix core utilities: `m65.ls`, `m65.tree`, `m65.cp`, `m65.mv`, `m65.rm`,
 `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`, `m65.run`, `m65.reset`,
 `m65.mount`, `m65.peek`, `m65.discover` and `m65.defrag`. Each takes `--help`; `m65 help`
 lists all of them.
@@ -52,6 +52,7 @@ and the computer needs IPv6 on the same network segment.
 | Tool | Does | Changes the card |
 |---|---|---|
 | `m65.ls [-lRd] [PATH…]` | Names (default `/`); `-l` adds type, size, time and `[fragmented]`; `-R` recursive with `DIR:` headers | no |
+| `m65.tree [-d] [-L LEVEL] [DIR]` | Tree view like tree(1): sizes and dates of files, total size and file count of each directory, `[fragmented]` marks, and a summary line (with free space for `/`). `-d` directories only, `-L` depth. A whole card takes about 5 s | no |
 | `m65.cat FILE…` | Print files | no |
 | `m65.stat PATH…` | Size, times, 8.3 name, attributes, contiguous, start sector | no |
 | `m65.df [--contiguous]` | Size, used and free; `--contiguous` adds the largest free run (reads the whole FAT, ~30 s) | no |
@@ -110,7 +111,8 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
 
 | Request | Commands |
 |---|---|
-| "What's on my MEGA65?" | `m65.ls -l /` (then `m65.ls -lR /DIR`) |
+| "What's on my MEGA65?" | `m65.ls -l /`, or `m65.tree -L 2` for an overview |
+| "Give me a tree view of the card (in a file)" | `m65.tree > sdcard-tree.txt` |
 | "Copy my game folder to the MEGA65" | `m65.mkdir -p /GAMES && m65.cp -r ./mygame m65:/GAMES/` |
 | "Back up the card / a folder" | `m65.cp -rp m65:/ ./backup` or `m65.cp -rp m65:/GAMES ./backup` |
 | "Push this disk and run it" | `m65.boot game.d81` (`--mode c64` to force GO64) |

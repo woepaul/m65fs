@@ -323,7 +323,7 @@ library, not a best effort:
 | M6 ✅ | Hardening: timeouts/errors as exceptions, close semantics, logging via `System.Logger`, README with usage | review |
 | M7 ✅ | Launching: boot D81s and run PRGs in C64 (GO64) and MEGA65 mode, reset/detach | hardware markers |
 | M8 ✅ | Defragmentation: scan report + optional fix, `Defrag` CLI (jar main class) | image tests + hardware (file fragmented on purpose) |
-| M9 ✅ | `m65.*` tools (coreutils style: ls/cp/mv/rm/mkdir/cat/stat/df + boot/run/reset/mount/peek/discover/defrag), GraalVM native binary, agent skill in `.claude/skills/m65fs` | CLI tests on images + hardware (native) |
+| M9 ✅ | `m65.*` tools (coreutils style: ls/tree/cp/mv/rm/mkdir/cat/stat/df + boot/run/reset/mount/peek/discover/defrag), GraalVM native binary, agent skill in `.claude/skills/m65fs` | CLI tests on images + hardware (native) |
 
 M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDevice`.
 
