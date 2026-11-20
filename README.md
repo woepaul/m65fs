@@ -1,25 +1,52 @@
 # m65fs
 
-A Java NIO file system for the SD card of a [MEGA65](https://mega65.org), accessed over
-Ethernet with the same protocol as `mega65_ftp -e`. With it, any Java code that uses
-`java.nio.file.Files` can work on the card: copy, move, list, delete and stream files. It
-can also mount D81 images.
+Tools and a Java library for working with a [MEGA65](https://mega65.org) over Ethernet:
+manage the files on its SD card and start software on it from your computer. You don't need
+a card reader, and nothing has to be installed on the MEGA65. m65fs speaks the same
+protocols as mega65-tools' `mega65_ftp -e` and `etherload`.
+
+- **Command line tools in the style of the Unix core utilities:** `m65.ls`, `m65.tree`,
+  `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`. They copy
+  single files or whole directory trees in either direction, and they're built as one native
+  binary (GraalVM) that starts in milliseconds.
+- **Push and run software with one command:** `m65.boot` boots a D81 disk image and
+  `m65.run` starts a PRG, in MEGA65 mode or in C64 mode (as entered with `GO64`).
+  `m65.reset` gives you the machine back.
+- **No fragmented files:** some cores and the hypervisor can't use fragmented files.
+  m65fs always writes files contiguously, and `m65.defrag` finds and fixes fragmented files
+  left by other tools.
+- **A Java NIO file system** (`mega65://`): any Java code that uses `java.nio.file.Files`
+  works on the card. The lower layers (FAT32, block devices, the Ethernet protocols) are
+  usable on their own.
+- **An agent skill** (`.claude/skills/m65fs`) that lets AI agents serve MEGA65 requests with
+  the tools.
+
+```sh
+m65.tree -L 1                        # what's on the card
+m65.cp -r ./mygame m65:/GAMES/       # copy a directory tree to the card
+m65.boot game.d81                    # copy the disk to the card, mount it, run its first program
+m65.run demo.prg                     # load a program into memory and start it
+m65.defrag                           # report fragmented files (--fix to defragment)
+```
+
+The same from Java:
 
 ```java
-try (FileSystem fs = FileSystems.newFileSystem(URI.create("mega65://auto/"), Map.of())) {
-  Files.copy(Path.of("game.d81"), fs.getPath("/GAME.D81"), StandardCopyOption.REPLACE_EXISTING);
+try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), Map.of())) {
   try (Stream<Path> s = Files.list(fs.getPath("/"))) {
     s.forEach(System.out::println);
   }
-  ((Mega65FileSystem) fs).mountD81(fs.getPath("/GAME.D81"));
-}   // closing ends the session; the MEGA65 resets
+  Files.copy(Path.of("game.d81"), fs.getPath("/GAME.D81"), StandardCopyOption.REPLACE_EXISTING);
+  fs.closeAndBoot(fs.getPath("/GAME.D81"));   // ends the session, mounts the disk, runs it
+}
 ```
 
-Pure Java (25+), no native code, no dependencies.
+The library is pure Java 25 with no dependencies; the native binary is optional. It also
+works on SD card image files. Everything has been tested on real hardware.
 
 ## How it works
 
-The library talks to the MEGA65 the same way `mega65_ftp -e` does:
+For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
 
 1. **Bootstrap.** A trigger packet puts the MEGA65 hypervisor into Ethernet remote control.
    Small 6502 programs ("ethlets") then upload the helper `remotesd_eth.prg` and `RUN` it.
@@ -27,6 +54,9 @@ The library talks to the MEGA65 the same way `mega65_ftp -e` does:
    The library sends requests through a sliding window with retransmission.
 3. **FAT32 on the PC.** All file system logic runs in Java: MBR, FAT32, VFAT long names and
    cluster allocation. The MEGA65 is only a remote block device.
+
+Starting software works like `etherload`: after the trigger, ethlets write the program (or a
+small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 mode.
 
 `PLAN.md` has the full protocol analysis.
 
