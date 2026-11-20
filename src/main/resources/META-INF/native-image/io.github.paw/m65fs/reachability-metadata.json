@@ -1,0 +1,7 @@
+{
+  "resources": [
+    {
+      "glob": "io/github/paw/m65fs/blobs/*"
+    }
+  ]
+}

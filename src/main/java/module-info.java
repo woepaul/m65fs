@@ -5,6 +5,7 @@
  * <p>Entry point: {@code FileSystems.newFileSystem(URI.create("mega65://auto/"), Map.of())}.
  */
 module io.github.paw.m65fs {
+  requires static org.graalvm.nativeimage; // only used inside the native binary
   exports io.github.paw.m65fs.nio;
   exports io.github.paw.m65fs.fat32;
   exports io.github.paw.m65fs.block;

@@ -323,6 +323,7 @@ library, not a best effort:
 | M6 ✅ | Hardening: timeouts/errors as exceptions, close semantics, logging via `System.Logger`, README with usage | review |
 | M7 ✅ | Launching: boot D81s and run PRGs in C64 (GO64) and MEGA65 mode, reset/detach | hardware markers |
 | M8 ✅ | Defragmentation: scan report + optional fix, `Defrag` CLI (jar main class) | image tests + hardware (file fragmented on purpose) |
+| M9 ✅ | `m65.*` tools (coreutils style: ls/cp/mv/rm/mkdir/cat/stat/df + boot/run/reset/mount/peek/discover/defrag), GraalVM native binary, agent skill in `.claude/skills/m65fs` | CLI tests on images + hardware (native) |
 
 M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDevice`.
 
@@ -332,6 +333,14 @@ M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDe
   helper upload (our own cc65 build), RUN, then a minimal hello + quit — 0.6 s total.
   Hardware bug found: the trigger magic starts with the *byte* `0x65`, not the characters
   "65" (`magic_string` comment "65 G S" is misleading); pinned by a unit test.
+* **M9 status (2026-11-20):** `tools.M65fs`: one program, invoked as `m65.CMD` (argv[0]
+  via GraalVM's `ProcessProperties` in the native binary) or `m65 CMD`. GNU cp/mv semantics
+  (overwrite by default, `-n`, `-r`, `-p`), card paths `m65:/PATH` (scp style). Environment
+  `M65_TARGET`, `M65_IMAGE`, `M65_RESET` (default: no reset after file tools). Native binary
+  via `tools/build-native.sh` (GraalVM CE 25.0.2, cached in ~/.cache/m65fs; provider
+  initialized at build time because the JDK's installed-provider list is; blobs via
+  reachability-metadata.json, verified after each build). `m65.ls` on an image: ~3 ms native vs
+  ~60 ms JVM; on the card ~0.8 s (helper bootstrap). Skill rewritten for the `m65.*` tools.
 * **M8 status (2026-11-20):** `Fat32Volume.defragment` (raw cluster copy into one free run,
   entry switched, old clusters freed; times/attributes/size kept), `nio.Defragmenter`
   (scan → report, defragment → per-file results, smallest first, NO_SPACE retried once),

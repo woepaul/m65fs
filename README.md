@@ -143,15 +143,70 @@ root directory has one. **Don't delete a mounted image** before pressing reset: 
 point at freed clusters (or detach it first with `closeAndReset`). The current mount can be read with
 `peek(0xFFD368B, 5)`: the flags (`$D68B`) and the image's start sector (`$D68C`–`$D68F`).
 
+## Command line tools
+
+The `m65.*` tools work like the Unix core utilities. They're one native binary, built with
+GraalVM `native-image`, so they start in milliseconds:
+
+```sh
+tools/install.sh                     # build the native binary, install m65 + m65.* into ~/.local/bin
+
+m65.ls -l /GAMES                     # list (-l: size, time, [fragmented]; -R recursive)
+m65.cp -r ./mygame m65:/GAMES/       # copy like cp: card paths are m65:/PATH
+m65.cp -rp m65:/GAMES ./backup       # whole trees out, keeping times
+m65.mv /old.d81 /new.d81             # on the card
+m65.rm -r /GAMES/mygame
+m65.boot game.d81                    # copy to the card root, mount, reset, run the first program
+m65.run demo.prg                     # load into memory and start ($0801 C64 / $2001 MEGA65)
+m65.reset                            # MEGA65 mode, drive 0 detached
+m65.defrag [--fix]                   # report / fix fragmented files
+```
+
+The full set is `m65.ls`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
+`m65.df`, `m65.defrag`, `m65.boot`, `m65.run`, `m65.reset`, `m65.mount`, `m65.peek` and
+`m65.discover`. Each takes `--help`, and `m65 help` lists them all.
+
+- **`m65.cp`** has GNU cp semantics: `-r` for directories, several sources into a directory,
+  overwriting by default (`-n` keeps existing files) and `-p` to keep times. A failed
+  overwrite on the card leaves the old file intact (no contiguous space, for example).
+- **`m65.mv`** works on the card only.
+- **Environment variables:** `M65_TARGET=fe80::…%if` (default: discovery),
+  `M65_IMAGE=card.img` (an SD card image instead of a MEGA65) and `M65_RESET=1` (reset after
+  each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
+  `m65.boot` or `m65.run`).
+- **Exit status:** 0 ok, 1 error (`m65.defrag`: 1 = fragmented files remain, 2 = error).
+
+**Without installing:** `bin/m65.ls` and so on run the native binary if it's built and up to
+date, and otherwise the jar on the JVM (Java 25+). `java -jar target/m65fs-*.jar ls -l /`
+works too.
+
+### Building the native binary
+
+`tools/build-native.sh` builds `target/native/m65` and the `m65.*` links. It uses
+`$GRAALVM_HOME`, or downloads GraalVM Community for JDK 25 once into `~/.cache/m65fs`
+(checksum-verified). The build takes about 15 s. The resources the binary needs (the 6502
+blobs) are listed in `META-INF/native-image/io.github.paw/m65fs/reachability-metadata.json`,
+and the build fails if one isn't embedded. `tools/install.sh --jvm` installs the tools
+without GraalVM.
+
+## Agent skill
+
+`.claude/skills/m65fs/` is an [Agent Skill](https://agentskills.io): a `SKILL.md` that tells
+an AI agent how to serve MEGA65 requests with the `m65.*` tools. It covers when to use them,
+every tool, common requests ("push this disk and run it", "back up the card"), safety rules
+(cp-style overwrites, what changes the card or takes over the machine, when to ask first) and
+troubleshooting. Claude Code picks it up automatically in this project. Other agents can load
+the folder as a skill, with the tools installed on the PATH.
+
 ## Finding and fixing fragmented files
 
 Files written by other tools (or copied with a card reader) can be fragmented. The `Defrag`
 tool first lists them, and changes the card only when asked:
 
 ```sh
-java -jar target/m65fs-0.1.0-SNAPSHOT.jar                 # report only (opens the card read-only)
-java -jar target/m65fs-0.1.0-SNAPSHOT.jar --fix           # defragment the listed files
-java -jar target/m65fs-0.1.0-SNAPSHOT.jar --image card.img --fix   # an SD card image instead
+m65.defrag                           # report only (read-only)
+m65.defrag --fix                     # defragment the listed files
+M65_IMAGE=card.img m65.defrag --fix  # an SD card image
 ```
 
 ```
@@ -256,7 +311,7 @@ The packages below `nio` are public, so they can be used on their own:
 | `transport` | `UdpLink`, `SlidingWindow`, `Mega65Locator` (discovery), `Target` |
 | `etherload` | Hyperrupt trigger, ethlets, helper bootstrap, resets and jumps (`Etherload`) |
 | `launch` | `Mega65Launcher` (boot disks, run PRGs, reset), `D81Image`, `MachineMode` |
-| `tools` | `Defrag` command line tool (the jar's main class) |
+| `tools` | `M65fs`: the `m65.*` command line tools (the jar's main class) |
 | `remotesd` | `RemoteSdSession`: sectors, peek, mount, quit; `RemoteSdBlockDevice` |
 | `block` | `BlockDevice`, image files, caching, fail-fast wrapper |
 | `fat32` | `Fat32Volume`: the complete FAT32 implementation on any `BlockDevice` |

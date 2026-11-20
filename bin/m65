@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# The m65 tools from a checkout of the project: bin/m65.ls, bin/m65.cp, ... (links to this
+# script) or bin/m65 COMMAND. Runs the native binary (target/native/m65, see
+# tools/build-native.sh) when it is built and up to date, otherwise the jar on the JVM (Java 25+;
+# built with the Maven wrapper on first use).
+set -euo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+ROOT=$(cd "$(dirname "$SELF")/.." && pwd)
+NAME=$(basename "$0")
+NATIVE="$ROOT/target/native/m65"
+
+stale() { [[ -n $(find "$ROOT/src/main" "$ROOT/pom.xml" -newer "$1" -type f -print -quit 2>/dev/null) ]]; }
+
+if [[ -x "$NATIVE" ]] && ! stale "$NATIVE"; then
+  exec -a "$NAME" "$NATIVE" "$@"
+fi
+
+if ! command -v java >/dev/null; then
+  echo "$NAME: java (25 or newer) not found; or build the native binary with tools/build-native.sh" >&2
+  exit 1
+fi
+JAR=$(ls "$ROOT"/target/m65fs-*.jar 2>/dev/null | grep -v -e sources -e javadoc | head -1 || true)
+if [[ -z "$JAR" ]] || stale "$JAR"; then
+  echo "$NAME: building the jar ..." >&2
+  (cd "$ROOT" && ./mvnw -q -DskipTests package) >&2
+  JAR=$(ls "$ROOT"/target/m65fs-*.jar | grep -v -e sources -e javadoc | head -1)
+fi
+if [[ "$NAME" == m65.* ]]; then
+  exec java -jar "$JAR" "${NAME#m65.}" "$@"
+fi
+exec java -jar "$JAR" "$@"
