@@ -4,6 +4,15 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- Opening an SD card image: `Mega65FileSystem.openImage(path, env)`. The generic
+  `FileSystems.newFileSystem(path, env)`, which asks every installed provider, now only picks
+  m65fs with the `env` entry `"mega65": true` and only for files that look like an SD card
+  image (MBR with a FAT32 partition, or a FAT32 volume). Before, m65fs claimed every file and
+  failed on the ones it couldn't read, so other providers never got them. The CLI and
+  `Defrag` use `openImage`.
+
 ## 0.1.1 (2026-11-24)
 
 - Windows release: the `m65.COMMAND.cmd` wrappers in 0.1.0's zip had a carriage return in

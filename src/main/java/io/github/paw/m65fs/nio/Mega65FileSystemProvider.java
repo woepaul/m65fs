@@ -1,9 +1,11 @@
 package io.github.paw.m65fs.nio;
 
+import io.github.paw.m65fs.block.BlockDevice;
 import io.github.paw.m65fs.fat32.DirEntry;
 import io.github.paw.m65fs.fat32.Fat32Volume;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AccessMode;
@@ -17,6 +19,8 @@ import java.nio.file.FileSystem;
 import java.nio.file.FileSystemAlreadyExistsException;
 import java.nio.file.FileSystemException;
 import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.NotDirectoryException;
@@ -60,6 +64,11 @@ import java.util.Set;
 public final class Mega65FileSystemProvider extends FileSystemProvider {
 
   public static final String SCHEME = "mega65";
+  /**
+   * The {@code env} entry ({@code true}) without which {@code FileSystems.newFileSystem(Path,
+   * env)} never picks m65fs.
+   */
+  public static final String OPT_IN = "mega65";
 
   private final Map<String, Mega65FileSystem> fileSystems = new HashMap<>();
 
@@ -86,9 +95,58 @@ public final class Mega65FileSystemProvider extends FileSystemProvider {
   /** Opens an SD card image or bare FAT32 image file (not registered for {@link #getFileSystem}). */
   @Override
   public FileSystem newFileSystem(Path image, Map<String, ?> env) throws IOException {
+    // FileSystems.newFileSystem(Path) asks every installed provider: claim a file only when the
+    // caller asked for m65fs ("mega65": true) and it looks like an SD card image, so that every
+    // other request stays with the other providers
+    if (env == null || !new Env(env).bool(OPT_IN, false)) {
+      throw new UnsupportedOperationException("m65fs opens image files only with env \"" + OPT_IN + "\": true"
+          + " (or use Mega65FileSystem.openImage)");
+    }
+    if (!isImage(image)) {
+      throw new UnsupportedOperationException("not an SD card image (MBR with a FAT32 partition, or a FAT32 volume): "
+          + image);
+    }
+    return openImage(image, env);
+  }
+
+  /** Opens an SD card image without asking other providers (see {@link Mega65FileSystem#openImage}). */
+  Mega65FileSystem openImage(Path image, Map<String, ?> env) throws IOException {
+    if (!Files.exists(image)) {
+      throw new java.nio.file.NoSuchFileException(image.toString());
+    }
+    if (!isImage(image)) {
+      throw new java.nio.file.FileSystemException(image.toString(), null,
+          "not an SD card image (MBR with a FAT32 partition, or a FAT32 volume)");
+    }
     Map<String, Object> e = new HashMap<>(env == null ? Map.of() : env);
     e.put("imageFile", image);
     return Mega65FileSystem.open(this, null, "image", new Env(e));
+  }
+
+  /** A regular file on the default file system whose sector 0 looks like FAT32. */
+  static boolean isImage(Path p) {
+    if (p.getFileSystem() != FileSystems.getDefault() || !Files.isRegularFile(p)) {
+      return false;
+    }
+    try (var ch = Files.newByteChannel(p)) {
+      ByteBuffer s0 = ByteBuffer.allocate(BlockDevice.SECTOR_SIZE);
+      while (s0.hasRemaining() && ch.read(s0) > 0) {
+        // fill
+      }
+      return s0.flip().remaining() == BlockDevice.SECTOR_SIZE && Fat32Volume.looksLikeFat32(s0);
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  /** The installed instance (the one {@code FileSystems} uses), or a new one. */
+  static Mega65FileSystemProvider installed() {
+    for (FileSystemProvider p : FileSystemProvider.installedProviders()) {
+      if (p instanceof Mega65FileSystemProvider m) {
+        return m;
+      }
+    }
+    return new Mega65FileSystemProvider();
   }
 
   @Override

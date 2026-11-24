@@ -120,7 +120,8 @@ is the original design plan, written against mega65-tools' programs.
 |---|---|
 | `mega65://auto/` (or `mega65:///`) | Discover the MEGA65 on all interfaces (waits for its beacon, sent once a second; wired interfaces are preferred). |
 | `mega65://[fe80::4065:1ff:fe00:1%eth0]/` | Fixed address with its interface. `%25eth0` (RFC 6874) works too. |
-| `FileSystems.newFileSystem(Path.of("card.img"), env)` | A local SD card image (MBR + FAT32, or a bare FAT32 volume). |
+| `Mega65FileSystem.openImage(Path.of("card.img"), env)` | A local SD card image (MBR + FAT32, or a bare FAT32 volume). |
+| `FileSystems.newFileSystem(Path.of("card.img"), Map.of("mega65", true))` | The same through the generic NIO call. That call asks every installed provider, so m65fs only takes the file with the `"mega65": true` entry and only if it is an SD card image; anything else is left to the other providers. |
 | `mega65://name/` with env `imageFile` | A local image registered under a URI, so `Path.of(URI)` works. |
 
 There is one session per MEGA65, because the helper locks itself to the first client.

@@ -103,6 +103,19 @@ public final class Fat32Volume implements AutoCloseable {
     throw new FileSystemException(null, null, "no FAT32 partition found");
   }
 
+  /**
+   * Whether a device's sector 0 is what {@link #open} accepts: an MBR with a FAT32 partition,
+   * or the boot sector of a bare FAT32 volume. A cheap check before claiming a file.
+   */
+  public static boolean looksLikeFat32(ByteBuffer sector0) {
+    if (sector0.remaining() < BlockDevice.SECTOR_SIZE) {
+      return false;
+    }
+    ByteBuffer s0 = sector0.slice();
+    return Partition.parse(s0).stream().anyMatch(Partition::isFat32)
+        || new String(bytes(s0, 0x52, 5), StandardCharsets.US_ASCII).equals("FAT32");
+  }
+
   public BootSector bootSector() {
     return boot;
   }

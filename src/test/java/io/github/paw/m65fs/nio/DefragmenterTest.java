@@ -43,7 +43,7 @@ class DefragmenterTest {
   @BeforeEach
   void image() throws IOException {
     img = FatImages.bareVolume(tmp, 40);
-    try (var fs = FileSystems.newFileSystem(img.file(), Map.of())) {
+    try (var fs = Mega65FileSystem.openImage(img.file(), Map.of())) {
       Files.createDirectories(fs.getPath("/games/disks"));
       Files.write(fs.getPath("/games/disks/A.D81"), a);
       Files.write(fs.getPath("/games/B.PRG"), b);
@@ -64,7 +64,7 @@ class DefragmenterTest {
 
   @Test
   void scanReportsThenDefragmentFixes() throws IOException {
-    try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(img.file(), Map.of())) {
+    try (var fs = (Mega65FileSystem) Mega65FileSystem.openImage(img.file(), Map.of())) {
       var report = Defragmenter.scan(fs);
       assertFalse(report.isClean());
       assertEquals(List.of(fs.getPath("/games/disks/A.D81"), fs.getPath("/games/B.PRG")), report.paths());
@@ -98,7 +98,7 @@ class DefragmenterTest {
 
   @Test
   void readOnlyFileSystemsCanOnlyBeScanned() throws IOException {
-    try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(img.file(), Map.of("readOnly", true))) {
+    try (var fs = (Mega65FileSystem) Mega65FileSystem.openImage(img.file(), Map.of("readOnly", true))) {
       var report = Defragmenter.scan(fs);
       assertEquals(2, report.files().size());
       assertThrows(ReadOnlyFileSystemException.class, () -> Defragmenter.defragment(fs, report.paths(), null));

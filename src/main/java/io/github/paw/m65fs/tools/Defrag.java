@@ -106,7 +106,7 @@ public final class Defrag {
 
   private static FileSystem open(String target, Path image, Map<String, Object> env) throws IOException {
     if (image != null) {
-      return FileSystems.newFileSystem(image, env);
+      return Mega65FileSystem.openImage(image, env);
     }
     if (target != null) {
       env.put("target", target);

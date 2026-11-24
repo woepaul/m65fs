@@ -30,7 +30,7 @@ class Mega65PathTest {
   @BeforeAll
   static void open() throws IOException {
     var img = FatImages.bareVolume(tmp, 40);
-    fs = FileSystems.newFileSystem(img.file(), Map.of());
+    fs = Mega65FileSystem.openImage(img.file(), Map.of());
   }
 
   @AfterAll

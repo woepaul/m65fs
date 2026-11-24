@@ -195,6 +195,7 @@ Useful entry points:
 - `D81Image` reads a D81 directory.
 - `Defragmenter`: `scan`, `defragment`.
 - Attribute view `"mega65"` (`Mega65FileAttributes`): `shortName`, `startSector`, `contiguous`.
-- `FileSystems.newFileSystem(Path.of("card.img"), Map.of())` opens an SD card image.
+- `Mega65FileSystem.openImage(Path.of("card.img"), Map.of())` opens an SD card image
+  (`FileSystems.newFileSystem(path, env)` only picks m65fs with `env` entry `"mega65": true`).
 
 The project README has the full documentation.

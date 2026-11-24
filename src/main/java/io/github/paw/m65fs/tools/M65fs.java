@@ -859,7 +859,7 @@ public final class M65fs {
     e.put("readOnly", readOnly);
     String image = env.get("M65_IMAGE");
     if (image != null && !image.isBlank()) {
-      return (Mega65FileSystem) FileSystems.newFileSystem(Path.of(image), e);
+      return Mega65FileSystem.openImage(Path.of(image), e);
     }
     e.put("target", machine());
     return (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);

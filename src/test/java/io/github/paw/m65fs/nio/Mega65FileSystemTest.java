@@ -332,7 +332,7 @@ class Mega65FileSystemTest {
   void readOnlyFileSystem() throws IOException {
     Files.writeString(p("/x.txt"), "x");
     fs.close();
-    try (FileSystem ro = FileSystems.newFileSystem(img.file(), Map.of("readOnly", true))) {
+    try (FileSystem ro = Mega65FileSystem.openImage(img.file(), Map.of("readOnly", true))) {
       assertTrue(ro.isReadOnly());
       assertEquals("x", Files.readString(ro.getPath("/x.txt")));
       assertThrows(java.nio.file.ReadOnlyFileSystemException.class, () -> Files.writeString(ro.getPath("/y.txt"), "y"));
@@ -408,7 +408,7 @@ class Mega65FileSystemTest {
     ch.write(ByteBuffer.wrap(a));
     fs.close();
     assertFalse(ch.isOpen());
-    try (var again = FileSystems.newFileSystem(img.file(), Map.of())) {
+    try (var again = Mega65FileSystem.openImage(img.file(), Map.of())) {
       assertArrayEquals(a, Files.readAllBytes(again.getPath("/OPEN.BIN")));
     }
   }

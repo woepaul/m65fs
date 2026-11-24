@@ -14,8 +14,8 @@ import io.github.paw.m65fs.remotesd.RemoteSdSession;
 import io.github.paw.m65fs.transport.Mega65Locator;
 import io.github.paw.m65fs.transport.Target;
 import java.io.IOException;
-import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.lang.System.Logger;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.ClosedFileSystemException;
@@ -32,6 +32,7 @@ import java.time.Clock;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -140,6 +141,15 @@ public final class Mega65FileSystem extends FileSystem {
       return Target.parse(authority.substring(1, authority.length() - 1));
     }
     throw new IllegalArgumentException("URI host must be 'auto' or '[ipv6%interface]': " + authority);
+  }
+
+  /**
+   * Opens an SD card image file (MBR with a FAT32 partition, or a bare FAT32 volume). Unlike
+   * {@code FileSystems.newFileSystem(path, env)}, which asks every installed provider, this
+   * goes to m65fs directly. {@code env}: the options of the README (e.g. {@code readOnly}).
+   */
+  public static Mega65FileSystem openImage(Path image, Map<String, ?> env) throws IOException {
+    return Mega65FileSystemProvider.installed().openImage(image, env);
   }
 
   // ------------------------------------------------------------------ FileSystem
