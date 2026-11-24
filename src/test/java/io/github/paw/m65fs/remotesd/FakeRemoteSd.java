@@ -1,6 +1,8 @@
 package io.github.paw.m65fs.remotesd;
 
 import io.github.paw.m65fs.block.BlockDevice;
+import io.github.paw.m65fs.fat32.DirEntry;
+import io.github.paw.m65fs.fat32.Fat32Volume;
 import io.github.paw.m65fs.transport.Target;
 import io.github.paw.m65fs.transport.WindowProtocol;
 import java.io.IOException;
@@ -44,6 +46,11 @@ public final class FakeRemoteSd implements AutoCloseable {
 
   volatile int modelId = 0x03;
   public volatile int mountStatus = 0;
+  /** Whether the simulated hypervisor has trap_dos_getcwd (opcode 0x13 answers an error otherwise). */
+  public volatile boolean cwdSupported = true;
+  /** The simulated hypervisor's working directory cluster (0 = root) and drive. */
+  public volatile int cwdCluster = 0;
+  public volatile int cwdDrive = 0;
   public volatile boolean quit;
   /** Ignores every packet (the MEGA65 hangs or the cable is pulled). */
   public volatile boolean silent;
@@ -128,6 +135,10 @@ public final class FakeRemoteSd implements AutoCloseable {
       case Request.OP_QUIT -> {
         quit = true;
         reply(header(p, 7), from);
+        // the MEGA65 resets; the next session starts a new helper
+        client = null;
+        currentBatchCounter = 0xff;
+        writeBatchActive = false;
       }
       case Request.OP_READ_MEMORY -> {
         if (p.length != 12) {
@@ -153,11 +164,61 @@ public final class FakeRemoteSd implements AutoCloseable {
         mounted.add(new String(p, 7, end - 7, java.nio.charset.StandardCharsets.ISO_8859_1));
         byte[] r = header(p, 8);
         r[7] = (byte) mountStatus;
+        cwdCluster = rootCluster(); // the helper's mount changes to the root directory
         reply(r, from);
       }
+      case Request.OP_CWD -> cwd(p, from);
       case Request.OP_READ_SECTORS -> readSectors(p, from);
       case Request.OP_WRITE_SECTOR -> writeSector(p, from);
       default -> { }
+    }
+  }
+
+  /**
+   * Like the hypervisor: cdroot, then setname/findfile/chdir for each name, compared ignoring case
+   * with the long name if there is one, otherwise with the 8.3 name.
+   */
+  private void cwd(byte[] p, SocketAddress from) throws IOException {
+    if (p.length < 8 || p[7] > 1 || (p[7] == 1 && (p.length < 9 || p[p.length - 1] != 0))) {
+      return;
+    }
+    byte[] r = header(p, 13);
+    int status = cwdSupported ? 0 : 0x81;
+    if (status == 0 && p[7] == 1) {
+      Fat32Volume volume = Fat32Volume.open(dev);
+      DirEntry cur = volume.root();
+      String path = new String(p, 8, p.length - 9, java.nio.charset.StandardCharsets.ISO_8859_1);
+      for (String n : path.split("/")) {
+        if (n.isEmpty()) {
+          continue;
+        }
+        DirEntry d = cur;
+        cur = volume.list(d).stream().filter(e -> e.name().equalsIgnoreCase(n)).findFirst().orElse(null);
+        if (cur == null || !cur.isDirectory()) {
+          status = 0x88; // file not found
+          break;
+        }
+      }
+      if (cur != null) {
+        cwdCluster = cur.firstCluster();
+      }
+    }
+    r[7] = (byte) status;
+    if (status == 0) {
+      r[8] = (byte) cwdDrive;
+      for (int i = 0; i < 4; i++) {
+        r[9 + i] = (byte) (cwdCluster >>> (8 * i));
+      }
+    }
+    reply(r, from);
+  }
+
+  /** The root directory cluster, or 0 if the device holds no FAT32 file system. */
+  private int rootCluster() {
+    try {
+      return Fat32Volume.open(dev).root().firstCluster();
+    } catch (IOException | RuntimeException e) {
+      return 0;
     }
   }
 

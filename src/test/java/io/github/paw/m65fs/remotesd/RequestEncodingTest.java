@@ -51,6 +51,26 @@ class RequestEncodingTest {
   }
 
   @Test
+  void cwd() {
+    // case 0x13: [7] = mode (0 get, 1 set), for set the path from [8], null-terminated
+    assertArrayEquals(new byte[] {'m', 'r', 'e', 'q', 0, 0, 0x13, 0}, Request.Cwd.get().encode());
+    assertArrayEquals(new byte[] {'m', 'r', 'e', 'q', 0, 0, 0x13, 1, 'A', '/', 'B', 'C', 0},
+        Request.Cwd.set(java.util.List.of("A", "BC")).encode());
+    assertArrayEquals(new byte[] {'m', 'r', 'e', 'q', 0, 0, 0x13, 1, 0}, Request.Cwd.set(java.util.List.of()).encode());
+    org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+        () -> Request.Cwd.set(java.util.List.of("A/B")));
+    org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+        () -> Request.Cwd.set(java.util.List.of("x".repeat(128))), "the helper has room for 127 characters");
+  }
+
+  @Test
+  void parsesCwdResult() {
+    // status, drive, cluster LE
+    byte[] r = {'m', 'r', 's', 'p', 9, 0, 0x13, 0, 0, (byte) 0x85, (byte) 0xF9, 0x0D, 0x00};
+    assertEquals(new Response.CwdResult(9, 0, 0, 915845), Response.parse(ByteBuffer.wrap(r)).orElseThrow());
+  }
+
+  @Test
   void parsesSectorData() {
     byte[] r = new byte[525];
     r[0] = 'm'; r[1] = 'r'; r[2] = 's'; r[3] = 'p';

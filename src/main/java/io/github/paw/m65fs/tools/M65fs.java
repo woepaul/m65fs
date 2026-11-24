@@ -60,8 +60,8 @@ public final class M65fs {
   public static final String CARD_PREFIX = "m65:";
 
   private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
-  private static final List<String> COMMANDS = List.of("ls", "tree", "cp", "mv", "rm", "mkdir", "cat", "stat", "df",
-      "defrag", "boot", "run", "reset", "mount", "peek", "discover");
+  private static final List<String> COMMANDS = List.of("ls", "tree", "cd", "pwd", "cp", "mv", "rm", "mkdir", "cat",
+      "stat", "df", "defrag", "boot", "run", "reset", "mount", "peek", "discover");
 
   private final PrintStream out;
   private final PrintStream err;
@@ -143,6 +143,8 @@ public final class M65fs {
       int s = switch (cmd) {
         case "ls" -> ls(a);
         case "tree" -> tree(a);
+        case "cd" -> cd(a);
+        case "pwd" -> pwd(a);
         case "cp" -> cp(a);
         case "mv" -> mv(a);
         case "rm" -> rm(a);
@@ -188,7 +190,7 @@ public final class M65fs {
 
   private int ls(List<String> a) throws IOException {
     Set<Character> f = flags(a, "lRd");
-    List<String> paths = a.isEmpty() ? List.of("/") : a;
+    List<String> paths = a.isEmpty() ? List.of(".") : a;
     try (var fs = openCard(true)) {
       List<Path> files = new ArrayList<>();
       List<Path> dirs = new ArrayList<>();
@@ -250,6 +252,33 @@ public final class M65fs {
         at.isContiguous() || at.isDirectory() ? "" : "   [fragmented]");
   }
 
+  /**
+   * {@code cd [DIR]}: changes the working directory (the root without DIR). The MEGA65 keeps it,
+   * so it is the same as {@code CHDIR "DIR",U12} in BASIC and holds for the following commands.
+   */
+  private int cd(List<String> a) throws IOException {
+    String dir = a.isEmpty() ? "/" : a.removeFirst();
+    noOperands(a);
+    try (var fs = openCard(true)) {
+      if (!fs.isWorkingDirectoryShared()) {
+        throw new Failure(fs.target().isEmpty()
+            ? "an image file has no working directory (use absolute paths)"
+            : "the MEGA65's hypervisor does not keep a working directory (needs one with trap_dos_getcwd)");
+      }
+      fs.setWorkingDirectory(fs.getPath(cardPath(dir)));
+      return 0;
+    }
+  }
+
+  /** {@code pwd}: prints the working directory that relative card paths start from. */
+  private int pwd(List<String> a) throws IOException {
+    noOperands(a);
+    try (var fs = openCard(true)) {
+      out.println(fs.workingDirectory());
+      return 0;
+    }
+  }
+
   /** A file or directory for {@code tree}, with the totals of everything below it. */
   private record Node(String name, boolean dir, long size, String date, boolean fragmented, List<Node> children,
       long totalSize, int files, int dirs) {}
@@ -263,7 +292,7 @@ public final class M65fs {
     }
     Set<Character> f = flags(a, "d");
     boolean dirsOnly = f.contains('d');
-    String dir = a.isEmpty() ? "/" : a.removeFirst();
+    String dir = a.isEmpty() ? "." : a.removeFirst();
     noOperands(a);
     try (var fs = openCard(true)) {
       Path root = fs.getPath(cardPath(dir));
@@ -280,7 +309,7 @@ public final class M65fs {
       }
       out.println();
       String free = "";
-      if (root.toAbsolutePath().getNameCount() == 0) {
+      if (root.toAbsolutePath().normalize().getNameCount() == 0) {
         Mega65FileStore store = fs.fileStore();
         free = String.format(", volume '%s' %s free of %s", store.name(), humanSize(store.getUnallocatedSpace()),
             humanSize(store.getTotalSpace()));
@@ -697,7 +726,8 @@ public final class M65fs {
     var options = Mega65Launcher.Options.defaults();
     String mount = option(a, "--mount");
     if (mount != null) {
-      options = options.withMount(mount.startsWith(CARD_PREFIX) ? cardPath(mount).substring(1) : mount);
+      // images are mounted from the root directory
+      options = options.withMount(mount.startsWith(CARD_PREFIX) ? cardPath(mount).replaceFirst("^/+", "") : mount);
     }
     String jump = option(a, "--jump");
     if (jump != null) {
@@ -729,11 +759,12 @@ public final class M65fs {
     String name = oneOperand(a, "IMAGE.d81");
     requireMachine();
     try (var fs = openCard(false)) {
-      boolean ok = fs.mountD81(fs.getPath(cardPath(name)));
+      Path image = fs.getPath(cardPath(name));
+      boolean ok = fs.mountD81(image);
       if (!ok) {
         throw new Failure("the hypervisor refused to mount " + name);
       }
-      out.println("mounted " + cardPath(name) + " as drive 0");
+      out.println("mounted " + image.toAbsolutePath().normalize() + " as drive 0");
       return 0;
     }
   }
@@ -771,10 +802,12 @@ public final class M65fs {
     return s.startsWith(CARD_PREFIX);
   }
 
-  /** "m65:/x", "m65:x", "/x" or "x" -> "/x". */
+  /**
+   * "m65:/x" or "/x" -> "/x"; "m65:x" or "x" -> "x" (relative to the working directory, see
+   * m65.cd); "m65:" -> "" (the working directory).
+   */
   static String cardPath(String s) {
-    String p = isCard(s) ? s.substring(CARD_PREFIX.length()) : s;
-    return p.startsWith("/") ? p : "/" + p;
+    return isCard(s) ? s.substring(CARD_PREFIX.length()) : s;
   }
 
   private static Path path(Mega65FileSystem fs, String s) {
@@ -906,6 +939,8 @@ public final class M65fs {
     return switch (cmd) {
       case "ls" -> "m65.ls [-lRd] [PATH...]";
       case "tree" -> "m65.tree [-d] [-L LEVEL] [DIR]";
+      case "cd" -> "m65.cd [DIR]";
+      case "pwd" -> "m65.pwd";
       case "cp" -> "m65.cp [-rRnfpv] SOURCE... DEST      (card paths: m65:/PATH)";
       case "mv" -> "m65.mv [-nfv] SOURCE... DEST";
       case "rm" -> "m65.rm [-rRfv] PATH...";
@@ -929,10 +964,14 @@ public final class M65fs {
         m65 tools: the MEGA65's SD card and machine over Ethernet, in the style of the Unix
         core utilities. Each tool is m65.COMMAND (or: m65 COMMAND).
 
-        files (card paths: m65:/PATH; tools that only use the card also take plain /PATH)
+        files (card paths: m65:/PATH, or m65:PATH relative to the working directory; tools
+        that only use the card also take plain /PATH and PATH)
           m65.ls [-lRd] [PATH...]             list; -l sizes/times/[fragmented], -R recursive
           m65.tree [-d] [-L LEVEL] [DIR]      tree view with sizes, dates, directory totals;
                                               -d directories only, -L depth
+          m65.cd [DIR]                        change the working directory (root without DIR);
+                                              the MEGA65 keeps it: same as CHDIR "DIR",U12
+          m65.pwd                             print the working directory
           m65.cp [-rRnfpv] SOURCE... DEST     copy like cp: computer <-> card, card -> card;
                                               -r directories, -n keep existing, -p keep times;
                                               card files are always written contiguously

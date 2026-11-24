@@ -61,4 +61,82 @@ class NetworkFileSystemTest {
     }
     img.fsck();
   }
+
+  @Test
+  void workingDirectoryIsTheHypervisors(@TempDir Path tmp) throws IOException {
+    var img = FatImages.partitioned(tmp, 64);
+    try (var dev = ImageFileBlockDevice.open(img.file(), false);
+        var fake = new FakeRemoteSd(dev, 0.01, 0.01, 4)) {
+      var provider = new Mega65FileSystemProvider();
+      int gamesCluster;
+      try (var fs = open(provider, fake)) {
+        assertTrue(fs.isWorkingDirectoryShared());
+        assertEquals(fs.getPath("/"), fs.workingDirectory());
+        Files.createDirectories(fs.getPath("/Games/Shooters"));
+        Files.write(fs.getPath("/Games/Shooters/GAME.D81"), new byte[819_200]);
+        Files.write(fs.getPath("/ROOT.D81"), new byte[819_200]);
+        gamesCluster = (int) Files.getAttribute(fs.getPath("/Games"), "mega65:firstCluster");
+
+        // as CHDIR "GAMES",U12 in BASIC (names are matched ignoring case)
+        fs.setWorkingDirectory(fs.getPath("games"));
+        assertEquals(gamesCluster, fake.cwdCluster);
+        assertEquals(fs.getPath("/Games"), fs.workingDirectory(), "spelled as stored");
+        assertTrue(Files.isDirectory(fs.getPath("Shooters")));
+        assertEquals(fs.getPath("/Games/Shooters/GAME.D81"), fs.getPath("Shooters/GAME.D81").toAbsolutePath());
+
+        fs.setWorkingDirectory(fs.getPath("Shooters"));
+        fs.setWorkingDirectory(fs.getPath(".."));
+        assertEquals(gamesCluster, fake.cwdCluster);
+        assertThrows(java.nio.file.NoSuchFileException.class, () -> fs.setWorkingDirectory(fs.getPath("nope")));
+        assertThrows(java.nio.file.NotDirectoryException.class,
+            () -> fs.setWorkingDirectory(fs.getPath("Shooters/GAME.D81")));
+        assertEquals(gamesCluster, fake.cwdCluster, "unchanged after a failed change");
+
+        // mounting changes the hypervisor to the root directory; the file system changes back
+        assertTrue(fs.mountD81(fs.getPath("/ROOT.D81")));
+        assertEquals(gamesCluster, fake.cwdCluster);
+        fs.setWorkingDirectory(fs.getPath("Shooters"));
+      }
+
+      // the next session starts where the last one (or BASIC) left off
+      try (var fs = open(provider, fake)) {
+        assertEquals(fs.getPath("/Games/Shooters"), fs.workingDirectory());
+        fs.setWorkingDirectory(fs.getPath("/"));
+        assertEquals(2, fake.cwdCluster, "the root cluster, as after cdroot");
+      }
+      fake.cwdCluster = 0;
+      try (var fs = open(provider, fake)) {
+        assertEquals(fs.getPath("/"), fs.workingDirectory(), "cluster 0 is the root directory");
+      }
+      fake.cwdCluster = 12345;
+      try (var fs = open(provider, fake)) {
+        assertEquals(fs.getPath("/"), fs.workingDirectory(), "unknown directory (deleted since): the root");
+        assertEquals(2, fake.cwdCluster, "and the hypervisor changes there too");
+      }
+      fake.cwdCluster = gamesCluster;
+      fake.cwdDrive = 1;
+      try (var fs = open(provider, fake)) {
+        assertEquals(fs.getPath("/"), fs.workingDirectory(), "another partition: the root");
+        assertFalse(fs.isWorkingDirectoryShared());
+      }
+
+      // a hypervisor without trap_dos_getcwd: a working directory of this file system only
+      fake.cwdDrive = 0;
+      fake.cwdSupported = false;
+      try (var fs = open(provider, fake)) {
+        assertFalse(fs.isWorkingDirectoryShared());
+        assertEquals(fs.getPath("/"), fs.workingDirectory());
+        fs.setWorkingDirectory(fs.getPath("/Games"));
+        assertEquals(fs.getPath("/Games/Shooters"), fs.getPath("Shooters").toAbsolutePath());
+        assertEquals(gamesCluster, fake.cwdCluster, "not sent");
+      }
+      assertEquals(List.of(), fake.fatalErrors());
+    }
+    img.fsck();
+  }
+
+  private static Mega65FileSystem open(Mega65FileSystemProvider provider, FakeRemoteSd fake) throws IOException {
+    var session = RemoteSdSession.attach(UdpLink.open(fake.target()), RemoteSdSession.Options.defaults());
+    return Mega65FileSystem.attach(provider, null, "sim", session, new Env(Map.of()));
+  }
 }

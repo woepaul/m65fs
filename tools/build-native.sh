@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=25.0.2
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/m65fs"
-COMMANDS=(ls tree cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
+COMMANDS=(ls tree cd pwd cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  PLATFORM=linux-x64 ;;

@@ -172,6 +172,34 @@ public final class Fat32Volume implements AutoCloseable {
   }
 
   /**
+   * The entries from the root down to the directory that starts at {@code cluster}, found by
+   * following the {@code ..} entries upwards (empty for the root directory, which cluster 0 also
+   * stands for). This is how a working directory known only by its cluster, as the MEGA65
+   * hypervisor keeps it, becomes a path.
+   *
+   * @throws NoSuchFileException if no directory reachable from the root starts at {@code cluster}
+   */
+  public List<DirEntry> directoryPath(int cluster) throws IOException {
+    return locked(() -> {
+      List<DirEntry> path = new ArrayList<>();
+      int cur = cluster == 0 ? boot.rootCluster() : cluster;
+      for (int depth = 0; cur != boot.rootCluster(); depth++) {
+        if (depth == 4096 || cur < 2 || cur > boot.maxCluster()) {
+          throw new NoSuchFileException("directory at cluster " + cluster);
+        }
+        int child = cur;
+        int parent = new Dir(child).all().stream().filter(e -> e.name().equals("..")).findFirst()
+            .orElseThrow(() -> new NoSuchFileException("directory at cluster " + cluster)).firstCluster();
+        cur = parent == 0 ? boot.rootCluster() : parent;
+        path.addFirst(new Dir(cur).visible().stream()
+            .filter(e -> e.isDirectory() && e.firstCluster() == child).findFirst()
+            .orElseThrow(() -> new NoSuchFileException("directory at cluster " + cluster)));
+      }
+      return path;
+    });
+  }
+
+  /**
    * Reads file data at byte offset {@code position} into {@code dst}.
    *
    * @return number of bytes read, or {@code -1} at end of file

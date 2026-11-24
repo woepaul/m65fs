@@ -11,8 +11,8 @@ card contiguously** (some MEGA65 cores and the hypervisor cannot use fragmented 
 
 ## The tools
 
-The m65 tools follow the Unix core utilities: `m65.ls`, `m65.tree`, `m65.cp`, `m65.mv`, `m65.rm`,
-`m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`, `m65.run`, `m65.reset`,
+The m65 tools follow the Unix core utilities: `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`,
+`m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`, `m65.run`, `m65.reset`,
 `m65.mount`, `m65.peek`, `m65.discover` and `m65.defrag`. Each takes `--help`; `m65 help`
 lists all of them.
 
@@ -26,6 +26,14 @@ use. `tools/install.sh` installs native tools into `~/.local/bin`.
 **`m65:/PATH`**, like scp's `host:path`. Unprefixed paths are local. All other tools only work
 on the card and take plain `/PATH` (the prefix is accepted too). Paths compare
 case-insensitively like FAT (`/GAMES/x.d81` = `/games/X.D81`); long names are supported.
+
+**Working directory:** relative card paths (`m65:GAMES`, `GAMES`, `m65:` alone) start from the
+working directory, which `m65.cd DIR` changes and `m65.pwd` prints. The MEGA65 itself keeps it,
+so it lasts from one tool to the next and is the same one as `CHDIR "DIR",U12` in BASIC: what
+the user chose in BASIC is where relative paths start. This needs a hypervisor with
+`trap_dos_getcwd`; with an older one, and for `M65_IMAGE`, the working directory is always `/`
+and `m65.cd` fails. **Use absolute paths in scripts** unless the user works with a working
+directory on purpose; run `m65.pwd` first when a relative path matters.
 
 **Environment:**
 
@@ -51,8 +59,10 @@ and the computer needs IPv6 on the same network segment.
 
 | Tool | Does | Changes the card |
 |---|---|---|
-| `m65.ls [-lRd] [PATH…]` | Names (default `/`); `-l` adds type, size, time and `[fragmented]`; `-R` recursive with `DIR:` headers | no |
+| `m65.ls [-lRd] [PATH…]` | Names (default: the working directory); `-l` adds type, size, time and `[fragmented]`; `-R` recursive with `DIR:` headers | no |
 | `m65.tree [-d] [-L LEVEL] [DIR]` | Tree view like tree(1): sizes and dates of files, total size and file count of each directory, `[fragmented]` marks, and a summary line (with free space for `/`). `-d` directories only, `-L` depth. A whole card takes about 5 s | no |
+| `m65.cd [DIR]` | Change the working directory (`/` without DIR); the same as `CHDIR "DIR",U12` in BASIC | no |
+| `m65.pwd` | Print the working directory | no |
 | `m65.cat FILE…` | Print files | no |
 | `m65.stat PATH…` | Size, times, 8.3 name, attributes, contiguous, start sector | no |
 | `m65.df [--contiguous]` | Size, used and free; `--contiguous` adds the largest free run (reads the whole FAT, ~30 s) | no |
@@ -85,6 +95,8 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
   `m65.reset` (or boot or run something) so the user gets the machine back.
 - Because of this, `m65.peek` shows memory *after* the helper started (screen and I/O have
   changed). It can't inspect a program that was running before.
+- `m65.boot`, `m65.run` and `m65.reset` leave the MEGA65 in the root directory; the file tools
+  and `m65.mount` keep the working directory.
 - Disk images used with `m65.boot` or `m65.mount` must be in the **root directory**,
   contiguous, with a printable ASCII name of at most 63 characters. `m65.boot` with a local
   file takes care of that.

@@ -204,12 +204,29 @@ class M65fsCliTest {
   }
 
   @Test
+  void workingDirectoryOfAnImageIsTheRoot() throws IOException {
+    assertEquals(0, m65("mkdir", "/GAMES"));
+    assertEquals(0, m65("pwd"));
+    assertEquals("/\n", out());
+    assertEquals(1, m65("cd", "GAMES"));
+    assertTrue(err.toString().contains("image file has no working directory"), err.toString());
+    Files.writeString(tmp.resolve("a.txt"), "a");
+    assertEquals(0, m65("cp", tmp.resolve("a.txt").toString(), "m65:GAMES"));
+    assertEquals(0, m65("cp", tmp.resolve("a.txt").toString(), "m65:"));
+    assertEquals(0, m65("ls"));
+    assertEquals("a.txt\nGAMES\n", out());
+    assertEquals(0, m65("ls", "GAMES"));
+    assertEquals("a.txt\n", out());
+  }
+
+  @Test
   void commandFromProgramName() {
     assertArrayEquals(new String[] {"ls", "-l"}, M65fs.withInvokedCommand("/usr/local/bin/m65.ls", new String[] {"-l"}));
     assertArrayEquals(new String[] {"ls"}, M65fs.withInvokedCommand("m65", new String[] {"ls"}));
     assertArrayEquals(new String[] {"ls"}, M65fs.withInvokedCommand(null, new String[] {"ls"}));
-    assertEquals("/GAMES", M65fs.cardPath("m65:GAMES"));
-    assertEquals("/", M65fs.cardPath("m65:"));
+    assertEquals("GAMES", M65fs.cardPath("m65:GAMES"), "relative to the working directory");
+    assertEquals("/GAMES", M65fs.cardPath("m65:/GAMES"));
+    assertEquals("", M65fs.cardPath("m65:"));
     assertEquals("/x", M65fs.cardPath("/x"));
   }
 

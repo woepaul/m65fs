@@ -67,6 +67,12 @@ small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 
 * Remote mode on, which makes the MEGA65 send its "mega65" discovery beacon: DIP switch 2 on,
   or press SHIFT+£.
 * Nothing to install on the card. The helper is bundled (see [Blobs](#blobs)).
+* Optional, for a working directory shared with BASIC (`m65.cd`): a hypervisor with
+  `trap_dos_getcwd` ($0A) and `trap_dos_restorecwd` ($4C). The stock hypervisor changes to
+  the root directory on every Ethernet trigger and forgets the directory; the patch on the
+  `hyppo-preserve-cwd` branch of mega65-core saves it, and the helper returns to it when it
+  starts. To try it without flashing a core, put the patched `HICKUP.M65` into the card root
+  and power-cycle (delete it to go back).
 
 ## Opening a file system
 
@@ -159,6 +165,11 @@ Closing the file system closes any write channels still open, which writes their
   * `mountD81(path)` mounts an image as drive 0. The image must be in the root directory
     (a hypervisor limitation) and contiguous. Its name must be printable ASCII and at most
     63 characters.
+  * `workingDirectory()` / `setWorkingDirectory(path)`: the directory relative paths start
+    from. With a hypervisor that has `trap_dos_getcwd`, this is the MEGA65's own working
+    directory (`isWorkingDirectoryShared()`): a new file system starts where BASIC's `CHDIR` or
+    the last session left it, and changing it is like `CHDIR "DIR",U12`. Otherwise it starts
+    at `/` and only lives as long as the file system.
   * `peek(address, count)` reads memory (28-bit address).
   * `target()` returns the MEGA65's address.
 
@@ -184,6 +195,8 @@ tools/install.sh                     # build the native binary, install m65 + m6
 m65.ls -l /GAMES                     # list (-l: size, time, [fragmented]; -R recursive)
 m65.tree > card.txt                  # tree view with sizes, dates and directory totals
 m65.cp -r ./mygame m65:/GAMES/       # copy like cp: card paths are m65:/PATH
+m65.cd /GAMES                        # same as CHDIR "/GAMES",U12; kept by the MEGA65
+m65.cp demo.prg m65:                 # m65:NAME and plain NAME are relative to it
 m65.cp -rp m65:/GAMES ./backup       # whole trees out, keeping times
 m65.mv /old.d81 /new.d81             # on the card
 m65.rm -r /GAMES/mygame
@@ -193,7 +206,7 @@ m65.reset                            # MEGA65 mode, drive 0 detached
 m65.defrag [--fix]                   # report / fix fragmented files
 ```
 
-The full set is `m65.ls`, `m65.tree`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
+The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
 `m65.df`, `m65.defrag`, `m65.boot`, `m65.run`, `m65.reset`, `m65.mount`, `m65.peek` and
 `m65.discover`. Each takes `--help`, and `m65 help` lists them all.
 
@@ -201,6 +214,11 @@ The full set is `m65.ls`, `m65.tree`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`,
   overwriting by default (`-n` keeps existing files) and `-p` to keep times. A failed
   overwrite on the card leaves the old file intact (no contiguous space, for example).
 - **`m65.mv`** works on the card only.
+- **`m65.cd`** / **`m65.pwd`**: the MEGA65 keeps the working directory, so it holds from one
+  tool to the next and BASIC sees it too (`DIR U12`), and a `CHDIR` in BASIC is where
+  relative card paths start. This needs a hypervisor with `trap_dos_getcwd` and
+  `trap_dos_restorecwd` (see below); otherwise relative paths start at `/` and `m65.cd`
+  reports an error. `m65.boot`, `m65.run` and `m65.reset` leave the MEGA65 in `/`.
 - **Environment variables:** `M65_TARGET=fe80::…%if` (default: discovery),
   `M65_IMAGE=card.img` (an SD card image instead of a MEGA65) and `M65_RESET=1` (reset after
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
@@ -379,7 +397,9 @@ afterwards.
 `src/main/resources/io/github/paw/m65fs/blobs/` holds the five ethlets,
 `remotesd_eth.prg` and our own `c64boot.prg` (built from `src/main/asm/c64boot.a65`). They come from
 [mega65-tools](https://github.com/MEGA65/mega65-tools) (GPL-3); `PROVENANCE.txt` lists the
-commit and checksums. Rebuild them with `tools/build-blobs.sh`, which needs a mega65-tools
+commit and checksums. `remotesd_eth.prg` is built from the `remotesd-cwd` branch, which adds
+the working directory request (opcode `$13`) and returns to the saved working directory at
+startup. Rebuild them with `tools/build-blobs.sh`, which needs a mega65-tools
 checkout, Ophis and git. It builds its own cc65, because some distribution builds crash on
 the helper.
 

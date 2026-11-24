@@ -5,7 +5,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-COMMANDS=(ls tree cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
+COMMANDS=(ls tree cd pwd cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
 JVM=0
 if [[ "${1:-}" == "--jvm" ]]; then
   JVM=1

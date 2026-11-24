@@ -15,7 +15,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * A path on the MEGA65 SD card. Separator {@code /}; the working directory is the root.
+ * A path on the MEGA65 SD card. Separator {@code /}; relative paths are resolved against the
+ * file system's {@linkplain Mega65FileSystem#workingDirectory() working directory}.
  * Comparison is case-insensitive, like FAT name lookup.
  */
 record Mega65Path(Mega65FileSystem fileSystem, boolean absolute, List<String> names) implements Path {
@@ -194,7 +195,12 @@ record Mega65Path(Mega65FileSystem fileSystem, boolean absolute, List<String> na
 
   @Override
   public Mega65Path toAbsolutePath() {
-    return absolute ? this : of(true, names);
+    if (absolute) {
+      return this;
+    }
+    List<String> n = new ArrayList<>(((Mega65Path) fileSystem.workingDirectory()).names);
+    n.addAll(names);
+    return of(true, n);
   }
 
   /** The existing file's path with names spelled as stored on the card. */

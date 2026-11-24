@@ -25,6 +25,13 @@ public sealed interface Response {
   /** {@code status} 0 = mounted, 1 = error. */
   record MountResult(int seq, int status) implements Response {}
 
+  /**
+   * Answer to {@link Request.Cwd}: {@code status} 0 = ok (then {@code drive} and {@code cluster}
+   * describe the working directory; cluster 0 = root), otherwise the hypervisor's error code (for
+   * example when it has no {@code trap_dos_getcwd}, or a directory was not found).
+   */
+  record CwdResult(int seq, int status, int drive, int cluster) implements Response {}
+
   /** Decodes a datagram, or returns empty if it is not a well-formed remotesd_eth answer. */
   static Optional<Response> parse(ByteBuffer rx) {
     ByteBuffer b = rx.slice();
@@ -47,6 +54,9 @@ public sealed interface Response {
           ? new MemoryData(seq, (int) WindowProtocol.le32(b, 8), b.slice(12, len - 12).asReadOnlyBuffer())
           : null;
       case Request.OP_MOUNT -> len == 8 ? new MountResult(seq, b.get(7) & 0xff) : null;
+      case Request.OP_CWD -> len == 13
+          ? new CwdResult(seq, b.get(7) & 0xff, b.get(8) & 0xff, (int) WindowProtocol.le32(b, 9))
+          : null;
       default -> null;
     };
     return Optional.ofNullable(r);

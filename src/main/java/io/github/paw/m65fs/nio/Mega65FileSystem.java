@@ -14,12 +14,16 @@ import io.github.paw.m65fs.remotesd.RemoteSdSession;
 import io.github.paw.m65fs.transport.Mega65Locator;
 import io.github.paw.m65fs.transport.Target;
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.ClosedFileSystemException;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystem;
+import java.nio.file.FileSystemException;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.NotDirectoryException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.WatchService;
@@ -52,6 +56,7 @@ import java.util.regex.Pattern;
  */
 public final class Mega65FileSystem extends FileSystem {
 
+  private static final Logger LOG = System.getLogger(Mega65FileSystem.class.getName());
   static final Set<String> VIEWS = Set.of("basic", "dos", "mega65");
 
   private final Mega65FileSystemProvider provider;
@@ -63,6 +68,9 @@ public final class Mega65FileSystem extends FileSystem {
   private final int shadowMemoryLimit;
   private final Mega65FileStore store;
   private final Set<Channels.WriteChannel> writers = ConcurrentHashMap.newKeySet();
+  private volatile Mega65Path workingDirectory;
+  /** Whether the hypervisor keeps the working directory (so that it is shared with BASIC). */
+  private volatile boolean hypervisorCwd;
   private volatile boolean open = true;
 
   private Mega65FileSystem(Mega65FileSystemProvider provider, String key, String authority, Fat32Volume volume,
@@ -75,6 +83,7 @@ public final class Mega65FileSystem extends FileSystem {
     this.zone = env.zone();
     this.shadowMemoryLimit = env.integer("shadowMemoryLimit").orElse(Shadow.DEFAULT_MEMORY_LIMIT);
     this.store = new Mega65FileStore(this);
+    this.workingDirectory = root();
   }
 
   /** Opens the file system described by {@code authority} ("auto", "[fe80::…%if]") or {@code env}. */
@@ -108,7 +117,9 @@ public final class Mega65FileSystem extends FileSystem {
       BlockDevice dev, RemoteSdSession session, Env env) throws IOException {
     try {
       Fat32Volume volume = Fat32Volume.open(dev, Clock.system(env.zone()));
-      return new Mega65FileSystem(provider, key, authority, volume, session, env);
+      var fs = new Mega65FileSystem(provider, key, authority, volume, session, env);
+      fs.adoptHypervisorWorkingDirectory();
+      return fs;
     } catch (IOException | RuntimeException e) {
       dev.close();
       throw e;
@@ -269,6 +280,88 @@ public final class Mega65FileSystem extends FileSystem {
     }
   }
 
+  // ------------------------------------------------------------------ working directory
+
+  /**
+   * The directory relative paths are resolved against. On a MEGA65 with a hypervisor that keeps
+   * the working directory it is the hypervisor's (shared with {@code CHDIR "DIR",U12} in BASIC and
+   * with later sessions); otherwise, and for image files, it starts at the root and lives only as
+   * long as this file system.
+   */
+  public Path workingDirectory() {
+    return workingDirectory;
+  }
+
+  /** Whether {@link #setWorkingDirectory} changes the MEGA65's own working directory. */
+  public boolean isWorkingDirectoryShared() {
+    return hypervisorCwd;
+  }
+
+  /**
+   * Changes the working directory (relative paths are resolved against the current one). On a
+   * MEGA65 that keeps it, this is like {@code CHDIR} in BASIC and lasts beyond this session.
+   *
+   * @throws NoSuchFileException if {@code dir} does not exist
+   * @throws NotDirectoryException if it is not a directory
+   */
+  public void setWorkingDirectory(Path dir) throws IOException {
+    ensureOpen();
+    Mega65Path abs = Mega65Path.cast(dir).toAbsolutePath().normalize();
+    List<DirEntry> entries = directoryEntries(abs);
+    if (hypervisorCwd) {
+      if (!volume.isReadOnly()) {
+        volume.flush(); // the hypervisor reads the directories from the card
+      }
+      var cwd = session.changeWorkingDirectory(entries.stream().map(DirEntry::name).toList());
+      int expected = entries.isEmpty() ? volume.root().firstCluster() : entries.getLast().firstCluster();
+      if (cwd.cluster() != expected && !(entries.isEmpty() && cwd.cluster() == 0)) {
+        throw new IOException("the hypervisor changed to cluster " + cwd.cluster() + " instead of " + expected);
+      }
+    }
+    workingDirectory = new Mega65Path(this, true, entries.stream().map(DirEntry::name).toList());
+  }
+
+  /** The entries from the root down to the directory {@code abs} (absolute and normalized). */
+  private List<DirEntry> directoryEntries(Mega65Path abs) throws IOException {
+    List<DirEntry> entries = new ArrayList<>();
+    DirEntry cur = volume.root();
+    for (String n : abs.names()) {
+      cur = volume.find(cur, n).orElseThrow(() -> new NoSuchFileException(abs.toString()));
+      if (!cur.isDirectory()) {
+        throw new NotDirectoryException(abs.toString());
+      }
+      entries.add(cur);
+    }
+    return entries;
+  }
+
+  /** Starts in the hypervisor's working directory, if it keeps one on the partition we use. */
+  private void adoptHypervisorWorkingDirectory() throws IOException {
+    if (session == null) {
+      return;
+    }
+    var cwd = session.workingDirectory();
+    if (cwd.isEmpty()) {
+      LOG.log(Level.DEBUG, "hypervisor does not report a working directory; using the root");
+      return;
+    }
+    if (cwd.get().drive() != 0) {
+      LOG.log(Level.DEBUG, "hypervisor works on drive {0}, not on the first partition; using the root",
+          cwd.get().drive());
+      return;
+    }
+    hypervisorCwd = true;
+    try {
+      workingDirectory = new Mega65Path(this, true,
+          volume.directoryPath(cwd.get().cluster()).stream().map(DirEntry::name).toList());
+    } catch (FileSystemException e) {
+      // e.g. the directory was deleted since; don't leave the hypervisor (and BASIC) in it
+      LOG.log(Level.DEBUG, "hypervisor working directory (cluster {0}) not found ({1}); changing to the root",
+          cwd.get().cluster(), e.getMessage());
+      session.changeWorkingDirectory(List.of());
+    }
+  }
+
   /**
    * Asks the hypervisor to mount a D81 image as drive 0. The image must be in the root
    * directory (hypervisor limitation) and contiguous; pending writes are flushed first.
@@ -281,7 +374,12 @@ public final class Mega65FileSystem extends FileSystem {
     requireSession("mounting");
     String name = mountableName(image);
     volume.flush();
-    return session.mount(name);
+    boolean mounted = session.mount(name);
+    if (hypervisorCwd) {
+      // mounting changes to the root directory; go back
+      setWorkingDirectory(workingDirectory);
+    }
+    return mounted;
   }
 
   /**

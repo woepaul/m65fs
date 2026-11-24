@@ -3,7 +3,9 @@ package io.github.paw.m65fs.remotesd;
 import io.github.paw.m65fs.block.BlockDevice;
 import io.github.paw.m65fs.transport.WindowProtocol;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Requests understood by remotesd_eth. Every request starts with the 7-byte header
@@ -18,6 +20,7 @@ public sealed interface Request {
   int OP_READ_SECTORS = 0x04;
   int OP_READ_MEMORY = 0x11;
   int OP_MOUNT = 0x12;
+  int OP_CWD = 0x13;
   int OP_HELLO = 0xFD;
   int OP_RESET_TX = 0xFE;
   int OP_QUIT = 0xFF;
@@ -139,6 +142,54 @@ public sealed interface Request {
       byte[] name = filename.getBytes(StandardCharsets.ISO_8859_1);
       byte[] p = header(HEADER + name.length + 1, OP_MOUNT);
       System.arraycopy(name, 0, p, HEADER, name.length);
+      return p;
+    }
+  }
+
+  /**
+   * Reports the hypervisor's current drive and working directory, after changing it first if
+   * {@code path} is present: to the directory reached from the root through the given names (as
+   * the hypervisor compares them, ignoring case: the long name if the entry has one, otherwise the
+   * 8.3 name; an empty list is the root directory). Answered
+   * by {@link Response.CwdResult}. Needs a hypervisor with {@code trap_dos_getcwd}.
+   */
+  record Cwd(Optional<List<String>> path) implements Request {
+    /** Room for the path in the helper, including the terminating NUL. */
+    public static final int MAX_PATH = 128;
+
+    public Cwd {
+      Objects.requireNonNull(path);
+      path.ifPresent(names -> {
+        for (String n : names) {
+          if (n.isEmpty() || n.indexOf('/') >= 0 || n.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("invalid directory name: " + n);
+          }
+        }
+        if (String.join("/", names).length() + 1 > MAX_PATH) {
+          throw new IllegalArgumentException("path longer than " + (MAX_PATH - 1) + " characters");
+        }
+      });
+    }
+
+    /** Only reports the working directory. */
+    public static Cwd get() {
+      return new Cwd(Optional.empty());
+    }
+
+    /** Changes to the directory reached from the root through {@code names}. */
+    public static Cwd set(List<String> names) {
+      return new Cwd(Optional.of(List.copyOf(names)));
+    }
+
+    @Override
+    public byte[] encode() {
+      if (path.isEmpty()) {
+        return header(HEADER + 1, OP_CWD);
+      }
+      byte[] name = String.join("/", path.get()).getBytes(StandardCharsets.ISO_8859_1);
+      byte[] p = header(HEADER + 1 + name.length + 1, OP_CWD);
+      p[HEADER] = 1;
+      System.arraycopy(name, 0, p, HEADER + 1, name.length);
       return p;
     }
   }

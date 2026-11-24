@@ -11,7 +11,9 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
@@ -238,7 +240,8 @@ public final class RemoteSdSession implements AutoCloseable {
   }
 
   /**
-   * Asks the hypervisor to mount a D81 image located in the SD card root.
+   * Asks the hypervisor to mount a D81 image located in the SD card root. This leaves the
+   * hypervisor in the root directory.
    *
    * @return true if mounted
    */
@@ -254,6 +257,57 @@ public final class RemoteSdSession implements AutoCloseable {
       throw new IOException("no valid mount response");
     }
     return status[0] == 0;
+  }
+
+  /**
+   * The hypervisor's current drive (partition) and working directory, as the cluster where the
+   * directory starts (0 or the root cluster = root directory).
+   */
+  public record WorkingDirectory(int drive, int cluster) {}
+
+  /**
+   * Asks the hypervisor for its working directory: the one chosen with {@code CHDIR} in BASIC or
+   * by an earlier {@link #changeWorkingDirectory}. The helper returns to it when it starts (the
+   * Ethernet remote trap changes to the root directory to load the helper).
+   *
+   * @return empty if the hypervisor cannot tell (it has no {@code trap_dos_getcwd})
+   */
+  public synchronized Optional<WorkingDirectory> workingDirectory() throws IOException {
+    Response.CwdResult r = cwd(Request.Cwd.get());
+    return r.status() == 0 ? Optional.of(new WorkingDirectory(r.drive(), r.cluster())) : Optional.empty();
+  }
+
+  /**
+   * Changes the hypervisor's working directory (on its current drive), as {@code CHDIR} in BASIC
+   * would, to the directory reached from the root through {@code names} (each the long name if the
+   * entry has one, otherwise the 8.3 name, as the hypervisor compares them; empty = root
+   * directory). Mounting an image changes to the root directory, see {@link #mount}.
+   *
+   * @return the new working directory
+   * @throws IOException if the hypervisor does not support it or a directory was not found (the
+   *     working directory is then undefined)
+   */
+  public synchronized WorkingDirectory changeWorkingDirectory(List<String> names) throws IOException {
+    Response.CwdResult r = cwd(Request.Cwd.set(names));
+    if (r.status() != 0) {
+      throw new IOException("the hypervisor could not change to /" + String.join("/", names)
+          + " (error $" + Integer.toHexString(r.status()) + "; does its hypervisor support a working directory?)");
+    }
+    return new WorkingDirectory(r.drive(), r.cluster());
+  }
+
+  private Response.CwdResult cwd(Request.Cwd request) throws IOException {
+    ensureOpen();
+    Response.CwdResult[] result = new Response.CwdResult[1];
+    guardedControl(request, rx -> {
+      if (Response.parse(rx).orElse(null) instanceof Response.CwdResult r) {
+        result[0] = r;
+      }
+    });
+    if (result[0] == null) {
+      throw new IOException("no valid working directory response");
+    }
+    return result[0];
   }
 
   /**
