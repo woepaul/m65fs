@@ -18,8 +18,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Emulates ETHLOAD's ethlet execution on {@code [::1]}: every ethlet is echoed, LOAD ethlets
- * also copy their data into {@link #memory} (first 2 MiB only). Incoming
+ * Emulates the hypervisor's trigger and ETHLOAD's ethlet execution on {@code [::1]}: after a
+ * trigger every ethlet is echoed (until START takes the machine over), LOAD ethlets also copy
+ * their data into {@link #memory} (first 2 MiB only). Incoming
  * and outgoing packets are dropped with probability {@code loss}; answers are duplicated with
  * probability {@code dup}.
  */
@@ -29,6 +30,8 @@ public final class FakeHypervisor implements AutoCloseable {
   /** Every command ethlet received (echo, reset and jump ethlets), in order, with its kind. */
   public final List<Command> commands = Collections.synchronizedList(new ArrayList<>());
   public final AtomicInteger triggers = new AtomicInteger();
+  /** Whether ETHLOAD.M65 runs (after a trigger, until START takes the machine over). */
+  volatile boolean ethloadRuns;
 
   /** A received ECHO or START ethlet. */
   public record Command(Ethlet kind, byte[] packet) {
@@ -112,6 +115,9 @@ public final class FakeHypervisor implements AutoCloseable {
           continue;
         }
         Ethlet kind = Ethlet.of(p);
+        if (kind != null && !ethloadRuns) {
+          continue; // no trigger yet (or the machine was taken over): nobody runs ethlets
+        }
         if (kind == Ethlet.LOAD) {
           int addr = EthletProtocols.Load.loadAddress(p);
           int n = WindowProtocol.le16(p, Ethlet.LOAD_COUNT);
@@ -126,12 +132,16 @@ public final class FakeHypervisor implements AutoCloseable {
         } else {
           if (p.length == 128) {
             triggers.incrementAndGet();
+            ethloadRuns = true;
           }
           continue;
         }
         reply(p, from);
         if (rnd.nextDouble() < dup) {
           reply(p, from);
+        }
+        if (kind == Ethlet.START) {
+          ethloadRuns = false; // reset or jump: ETHLOAD.M65 is gone
         }
       } catch (IOException e) {
         if (running.get()) {

@@ -44,6 +44,7 @@ class EtherloadTest {
   void bootstrapUploadsHelperAndRunsIt() throws Exception {
     try (var hv = new FakeHypervisor(0, 0, 1); var link = UdpLink.open(hv.target())) {
       var el = Etherload.on(link);
+      el.triggerHyperrupt();
       byte[] prg = Etherload.bundledHelper();
       // bootstrap() would multicast the trigger, which needs an interface; do the rest by hand
       el.ping(Etherload.DEFAULT_TIMEOUT);
@@ -62,6 +63,7 @@ class EtherloadTest {
   void survivesPacketLossAndDuplicates() throws Exception {
     try (var hv = new FakeHypervisor(0.1, 0.1, 42); var link = UdpLink.open(hv.target())) {
       var el = Etherload.on(link);
+      el.triggerHyperrupt();
       byte[] data = new byte[200_000];
       new Random(7).nextBytes(data);
       el.writeMemory(0x10000, data, 0, data.length, Duration.ofSeconds(10));
@@ -76,6 +78,7 @@ class EtherloadTest {
   void writesNeverCrossMegabyteBoundary() throws Exception {
     try (var hv = new FakeHypervisor(0, 0, 1); var link = UdpLink.open(hv.target())) {
       var el = Etherload.on(link);
+      el.triggerHyperrupt();
       // 0xFFE00 + 1024 would cross into the next MB -> must be split into 512 + 512
       byte[] data = new byte[1024];
       Arrays.fill(data, (byte) 0x5a);
@@ -91,11 +94,32 @@ class EtherloadTest {
   }
 
   @Test
+  void connectDoesNotTriggerTwiceRightAfterAQuickCheck() throws Exception {
+    try (var hv = new FakeHypervisor(0, 0, 1)) {
+      // the remembered address is checked with a trigger and a ping ...
+      assertTrue(Etherload.answers(hv.target(), Duration.ofMillis(500)));
+      assertEquals(1, hv.triggers.get());
+      // ... and the session that follows uses the running ETHLOAD: a second trigger would save
+      // the root as working directory (the first one changed to it)
+      try (var link = UdpLink.open(hv.target())) {
+        var el = Etherload.connect(link);
+        assertEquals(1, hv.triggers.get());
+        el.jump(0xc000, null); // START takes the machine over: ETHLOAD is gone
+      }
+      try (var link = UdpLink.open(hv.target())) {
+        Etherload.connect(link);
+        assertEquals(2, hv.triggers.get(), "nothing runs ethlets any more: trigger again");
+      }
+    }
+  }
+
+  @Test
   void pingTimesOutWithoutMega65() throws Exception {
     // a port nobody listens on
     var target = new Target((Inet6Address) InetAddress.getByName("::1"), 9, null);
     try (var link = UdpLink.open(target)) {
       var el = Etherload.on(link);
+      el.triggerHyperrupt();
       assertThrows(Mega65TimeoutException.class, () -> el.ping(Duration.ofMillis(300)));
     }
   }

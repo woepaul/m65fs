@@ -75,13 +75,26 @@ public final class Etherload {
   }
 
   /**
-   * Traps the hypervisor and waits until it executes ethlets (ping). The trigger is repeated
-   * if a ping goes unanswered, e.g. while the MEGA65 is still resetting (up to about 15 s).
+   * Makes sure the hypervisor executes ethlets: if ETHLOAD.M65 already runs (it answers a short
+   * ping, e.g. right after {@link #answers}), it is used as it is; otherwise the hypervisor is
+   * trapped and pinged. The trigger is repeated if a ping goes unanswered, e.g. while the MEGA65
+   * is still resetting (up to about 15 s).
+   *
+   * <p>Not triggering twice matters: each trigger saves the working directory and changes to
+   * the root, so a second trigger right after the first would save the root and lose it.
    *
    * @return a ready instance on a fresh window
    * @throws Mega65TimeoutException with a hint if the MEGA65 never answers
    */
   public static Etherload connect(UdpLink link) throws IOException {
+    Etherload running = on(link);
+    try {
+      running.ping(ALREADY_RUNNING_PING);
+      LOG.log(Level.DEBUG, "ETHLOAD.M65 already runs; not triggering again");
+      return running;
+    } catch (Mega65TimeoutException e) {
+      // not running (BASIC, a program or the transfer helper): trigger
+    }
     // Right after a reset the hypervisor can ignore the trigger for several seconds.
     Duration[] waits = {Duration.ofMillis(1500), Duration.ofMillis(1500), Duration.ofSeconds(3),
         Duration.ofSeconds(4), Duration.ofSeconds(5)};
@@ -116,6 +129,9 @@ public final class Etherload {
       return false;
     }
   }
+
+  /** How long {@link #connect} waits for ETHLOAD.M65 to answer before it triggers. */
+  static final Duration ALREADY_RUNNING_PING = Duration.ofMillis(50);
 
   static byte[] triggerPacket() {
     byte[] packet = new byte[TRIGGER_LEN];

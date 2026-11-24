@@ -6,6 +6,11 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 
 ## Unreleased
 
+- Fixed: the working directory was lost on every command in 0.1.0 and 0.1.1 (`m65.cd c64`,
+  then `m65.ls` listed `/`). The quick check of the remembered address triggers the
+  hypervisor, and the session then triggered it a second time; that second trigger saved the
+  root as working directory. A session now uses ETHLOAD.M65 when it already runs, so the
+  hypervisor is triggered once per command.
 - Opening an SD card image: `Mega65FileSystem.openImage(path, env)`. The generic
   `FileSystems.newFileSystem(path, env)`, which asks every installed provider, now only picks
   m65fs with the `env` entry `"mega65": true` and only for files that look like an SD card
