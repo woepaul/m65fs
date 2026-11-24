@@ -1,19 +1,20 @@
 ---
 name: m65fs
-description: Work with a MEGA65 computer over Ethernet using the m65 tools (m65.ls, m65.cp, m65.boot, ...) and the m65fs library. Use them to list, copy (single files or whole directory trees, in either direction), move, delete and inspect files on the MEGA65's SD card; to push a D81 disk image and boot its first program in MEGA65 or C64 (GO64) mode; to load and run a PRG file; to reset the machine or mount a disk; to read memory; and to find and fix fragmented files. Also works on SD card image files. Use it whenever a request involves a MEGA65, its SD card, D81/PRG files for it, mega65_ftp or etherload.
+description: Work with a MEGA65 computer over Ethernet using the m65 tools (m65.ls, m65.cp, m65.boot, ...) and the m65fs library. Use them to list, copy (single files or whole directory trees, in either direction), move, delete and inspect files on the MEGA65's SD card; to change the working directory it shares with BASIC (m65.cd, m65.pwd); to push a D81 disk image and boot its first program in MEGA65 or C64 (GO64) mode; to load and run a PRG file; to reset the machine or mount a disk; to read memory; and to find and fix fragmented files. Also works on SD card image files. Use it whenever a request involves a MEGA65, its SD card, D81/PRG files for it, mega65_ftp or etherload.
 ---
 
 # m65fs: MEGA65 over Ethernet
 
-m65fs talks to the MEGA65 over Ethernet from pure Java, with its own small 45GS02 programs on the
-MEGA65 side (nothing to install there). All FAT32 handling runs on this computer, and **files are always written to the
-card contiguously** (some MEGA65 cores and the hypervisor cannot use fragmented files).
+m65fs talks to the MEGA65 over Ethernet from pure Java, with its own small 45GS02 programs on
+the MEGA65 side (nothing to install there). All FAT32 handling runs on this computer, and
+**files are always written to the card contiguously** (some MEGA65 cores and the hypervisor
+cannot use fragmented files).
 
 ## The tools
 
 The m65 tools follow the Unix core utilities: `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`,
-`m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`, `m65.run`, `m65.reset`,
-`m65.mount`, `m65.peek`, `m65.discover` and `m65.defrag`. Each takes `--help`; `m65 help`
+`m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`,
+`m65.run`, `m65.reset`, `m65.mount`, `m65.peek`, `m65.discover` and `m65.defrag`. Each takes `--help`; `m65 help`
 lists all of them.
 
 **Finding them:** use `m65.ls` etc. if they are on the PATH (`command -v m65.ls`). Otherwise
@@ -24,7 +25,8 @@ use. `tools/install.sh` installs native tools into `~/.local/bin`.
 
 **Card paths:** `m65.cp` copies between this computer and the card, so card paths are written
 **`m65:/PATH`**, like scp's `host:path`. Unprefixed paths are local. All other tools only work
-on the card and take plain `/PATH` (the prefix is accepted too). Paths compare
+on the card and take plain `/PATH`, or `PATH` relative to the working directory (the prefix is
+accepted too). Paths compare
 case-insensitively like FAT (`/GAMES/x.d81` = `/games/X.D81`); long names are supported.
 
 **Working directory:** relative card paths (`m65:GAMES`, `GAMES`, `m65:` alone) start from the
@@ -81,7 +83,7 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
 |---|---|
 | `m65.discover` | Print the MEGA65's address |
 | `m65.boot [-n] [--mode c64\|mega65] IMAGE.d81` | A **local** `.d81` is first copied to the card root (overwriting a same-named file; `-n` keeps an existing one); `m65:/IMAGE.D81` boots an image already on the card. Mounts it, resets and runs its first program. The mode follows the program's load address ($2001 = MEGA65, otherwise C64 mode as with `GO64`) unless `--mode` is given |
-| `m65.run [--mount IMAGE.D81] [--pal\|--ntsc] [--no-run] [--jump HEX] FILE.prg` | Load a local PRG straight into memory (nothing is written to the card) and start it: $0801 programs in C64 mode, $2001 programs in MEGA65 mode. Machine code at other addresses needs `--jump`. `--mount` attaches a D81 from the card root (in MEGA65 mode the program is then only loaded, not run) |
+| `m65.run [--mount IMAGE.D81] [--pal\|--ntsc] [--no-run] [--jump HEX] FILE.prg` | Load a local PRG straight into memory (nothing is written to the card) and start it: $0801 programs in C64 mode, $2001 programs in MEGA65 mode. Machine code at other addresses needs `--jump`. `--mount` attaches a D81 from the card root at the same time |
 | `m65.reset [--mode mega65\|c64] [--pal\|--ntsc]` | Reset. A MEGA65-mode reset (the default) also **detaches drive 0** and leaves the transfer screen |
 | `m65.mount IMAGE.D81` | Attach a D81 from the card root as drive 0 |
 | `m65.peek ADDRESS_HEX [COUNT]` | Hex dump of memory (28-bit address, e.g. `m65.peek ffd3629 1` = model ID) |
@@ -102,8 +104,10 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
   file takes care of that.
 - A mount survives the end of a tool. Don't delete an image that may be mounted: `m65.reset`
   first (detaches drive 0), then `m65.rm`.
-- Each call costs about 0.5–1 s for the session setup. Copy directories with one `m65.cp -r`
-  instead of many single-file calls.
+- Each call costs about 0.1 s for the session setup (the first one, or the first after the
+  network changed, up to about 1 s more to find the MEGA65). Copy directories with one
+  `m65.cp -r` instead of many single-file calls anyway. Writing runs at about 450 KiB/s,
+  reading at about 950 KiB/s.
 
 ## Safety rules for agents
 
@@ -129,7 +133,8 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
 | "Back up the card / a folder" | `m65.cp -rp m65:/ ./backup` or `m65.cp -rp m65:/GAMES ./backup` |
 | "Push this disk and run it" | `m65.boot game.d81` (`--mode c64` to force GO64) |
 | "Run this program" | `m65.run demo.prg` |
-| "Run this program, it needs its data disk" | `m65.cp data.d81 m65:/` then `m65.run --mount DATA.D81 game.prg` (C64 programs; for MEGA65 programs boot the disk instead) |
+| "Run this program, it needs its data disk" | `m65.cp data.d81 m65:/` then `m65.run --mount m65:/DATA.D81 game.prg` |
+| "Go into my games folder" / "where am I?" | `m65.cd /GAMES` (BASIC's `DIR U12` then lists it too) / `m65.pwd` |
 | "Is anything fragmented?" | `m65.defrag`; after confirmation `m65.defrag --fix` |
 | "Free space?" | `m65.df` |
 | "Eject the disk / give me my machine back" | `m65.reset` |
@@ -143,7 +148,9 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
 | `no response from MEGA65 … ETHLOAD.M65` | The hypervisor didn't answer (retried for ~15 s). Ask the user to check remote mode and that `ETHLOAD.M65` is in the card root, or to press reset |
 | `… File exists` | `m65.mkdir` target exists (`-p` ignores that) |
 | `no contiguous free space` | No free run large enough. Free up space, or check with `m65.defrag`. The old file is unchanged |
-| `only images in the root directory can be mounted` | Copy the image to `m65:/` first |
+| `only images in the root directory can be mounted` | Copy the image to `m65:/` first; with a working directory set, give the image as `m65:/NAME.D81` |
+| `the MEGA65's hypervisor does not keep a working directory` | `m65.cd` needs the patched hypervisor (see the project README); use absolute paths instead |
+| `an image file has no working directory` | With `M65_IMAGE`, use absolute paths |
 | `program loads at $XXXX: only $0801 … and $2001 …` | A machine-code PRG: ask for the start address and use `m65.run --jump HEX` |
 | `session … failed earlier` / timeouts | Network trouble. The tool can be run again; for writes, see safety rule 4 |
 | `MEGA65 did not acknowledge quit` (warning) | The machine may still show the transfer helper; `m65.reset` or the reset button |
@@ -179,8 +186,9 @@ public class MyTask {
 Useful entry points:
 - `java.nio.file.Files` works on paths from the file system.
 - `Mega65FileSystem`: `mountD81`, `peek`, `commit()` (every operation is already on the card
-  when it returns; `commit` also flushes still-open write channels), and `closeAndBoot`,
-  `closeAndRun`, `closeAndReset`.
+  when it returns; `commit` also flushes still-open write channels), `workingDirectory()` /
+  `setWorkingDirectory(path)` (shared with BASIC when the hypervisor supports it), and
+  `closeAndBoot`, `closeAndRun`, `closeAndReset`.
 - `Mega65Launcher`: `runPrg`, `boot`, `reset` without a file system.
 - `D81Image` reads a D81 directory.
 - `Defragmenter`: `scan`, `defragment`.

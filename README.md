@@ -7,9 +7,13 @@ Ethernet remote control (`ETHLOAD.M65`) with its own small 45GS02 programs; the 
 those of mega65-tools' `mega65_ftp -e` and `etherload`, reduced to what m65fs needs.
 
 - **Command line tools in the style of the Unix core utilities:** `m65.ls`, `m65.tree`,
-  `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`. They copy
-  single files or whole directory trees in either direction, and they're built as one native
-  binary (GraalVM) that starts in milliseconds.
+  `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
+  `m65.df`. They copy single files or whole directory trees in either direction, and they're
+  built as one native binary (GraalVM). A command such as `m65.ls /` takes about 0.1 s,
+  writing runs at about 450 KiB/s and reading at about 950 KiB/s (see `CHANGELOG.md`).
+- **A working directory shared with BASIC:** `m65.cd /GAMES` is the same as
+  `CHDIR "/GAMES",U12`, and relative card paths start where BASIC left off (needs a patched
+  hypervisor, see [What you need](#what-you-need)).
 - **Push and run software with one command:** `m65.boot` boots a D81 disk image and
   `m65.run` starts a PRG, in MEGA65 mode or in C64 mode (as entered with `GO64`).
   `m65.reset` gives you the machine back.
@@ -45,6 +49,17 @@ try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://
 The library is pure Java 25 with no dependencies; the native binary is optional. It also
 works on SD card image files. Everything has been tested on real hardware.
 
+## What you need
+
+| | Required | Optional |
+|---|---|---|
+| **Running the tools** | Java 25, or nothing with the native binary | |
+| **On the MEGA65** | a standard SD card (`ETHLOAD.M65` in the root), Ethernet, remote mode (DIP switch 2 or SHIFT+£) | the `hyppo-preserve-cwd` hypervisor patch for the shared working directory |
+| **Building** | the Maven wrapper (`./mvnw`, fetches Maven and the Java build plugins) | GraalVM for the native binary (downloaded by `tools/build-native.sh`); ACME 0.97+ to rebuild the MEGA65 code (the built blobs are in the repository); `dosfstools` and `mtools` for the image tests |
+
+Nothing has to be installed on the MEGA65: everything m65fs runs there is its own small 45GS02
+code, bundled in the jar and in the binary.
+
 ## How it works
 
 For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
@@ -60,7 +75,8 @@ For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
 Starting software works the same way: after the trigger, ethlets write the program (or a
 small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 mode.
 
-`PLAN.md` has the full protocol analysis.
+`docs/mega65-code.md` describes the code that runs on the MEGA65 and its protocols. `PLAN.md`
+is the original design plan, written against mega65-tools' programs.
 
 ## Requirements on the MEGA65
 
@@ -68,7 +84,7 @@ small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 
   the default on Linux, macOS and Windows.
 * Remote mode on, which makes the MEGA65 send its "mega65" discovery beacon: DIP switch 2 on,
   or press SHIFT+£.
-* Nothing to install on the card. The helper is bundled (see [Blobs](#blobs)).
+* Nothing to install on the card. The MEGA65 code is bundled (see [Blobs](#blobs)).
 * Optional, for a working directory shared with BASIC (`m65.cd`): a hypervisor with
   `trap_dos_getcwd` ($0A) and `trap_dos_restorecwd` ($4C). The stock hypervisor changes to
   the root directory on every Ethernet trigger and forgets the directory; the patch on the
@@ -80,7 +96,7 @@ small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 
 
 | URI / call | Meaning |
 |---|---|
-| `mega65://auto/` (or `mega65:///`) | Discover the MEGA65 on all interfaces (2.5 s). |
+| `mega65://auto/` (or `mega65:///`) | Discover the MEGA65 on all interfaces (waits for its beacon, sent once a second; wired interfaces are preferred). |
 | `mega65://[fe80::4065:1ff:fe00:1%eth0]/` | Fixed address with its interface. `%25eth0` (RFC 6874) works too. |
 | `FileSystems.newFileSystem(Path.of("card.img"), env)` | A local SD card image (MBR + FAT32, or a bare FAT32 volume). |
 | `mega65://name/` with env `imageFile` | A local image registered under a URI, so `Path.of(URI)` works. |
@@ -238,7 +254,7 @@ works too.
 
 `tools/build-native.sh` builds `target/native/m65` and the `m65.*` links. It uses
 `$GRAALVM_HOME`, or downloads GraalVM Community for JDK 25 once into `~/.cache/m65fs`
-(checksum-verified). The build takes about 15 s. The resources the binary needs (the 6502
+(checksum-verified). The build takes about 15 s. The resources the binary needs (the MEGA65
 blobs) are listed in `META-INF/native-image/io.github.paw/m65fs/reachability-metadata.json`,
 and the build fails if one isn't embedded. `tools/install.sh --jvm` installs the tools
 without GraalVM.
@@ -308,13 +324,12 @@ try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://
     (`src/main/asm/c64boot.a`) then does `LOAD"name",8,1` and types `RUN`, exactly as a
     user would. Programs that start themselves during the load (autostart tricks) work too.
   * **MEGA65 mode:** the reset happens without a disk, and a one-line BASIC 65 program does
-    `MOUNT"image":RUN"name"`. If a disk is attached during the reset, the ROM doesn't start the
-    program in memory (found on hardware).
+    `MOUNT"image":RUN"name"`.
 * **`closeAndRun(prg, options)`** or **`Mega65Launcher.runPrg(target, prg, options)`** loads a
   program file straight into memory; nothing is written to the card. A `$0801` program runs in
-  C64 mode, a `$2001` program in MEGA65 mode. Options cover mounting a D81 at the same time
-  (in MEGA65 mode the program is then only loaded, not run), PAL/NTSC, or
-  `withJump(address)` for machine code at other addresses.
+  C64 mode, a `$2001` program in MEGA65 mode. Options cover mounting a D81 at the same time,
+  PAL/NTSC, not running the program, or `withJump(address)` for machine code at other
+  addresses.
 * **`closeAndReset(mode)`** or **`Mega65Launcher.reset(...)`** resets the machine. A MEGA65-mode
   reset also **detaches drive 0**, which the soft reset at the end of a normal session doesn't.
 * **`D81Image`** reads a D81 directory (names, types, load addresses), from a local file or
@@ -366,7 +381,7 @@ The packages below `nio` are public, so they can be used on their own:
 | `etherload` | Hyperrupt trigger, ethlets, helper bootstrap, resets and jumps (`Etherload`) |
 | `launch` | `Mega65Launcher` (boot disks, run PRGs, reset), `D81Image`, `MachineMode` |
 | `tools` | `M65fs`: the `m65.*` command line tools (the jar's main class) |
-| `remotesd` | `RemoteSdSession`: sectors, peek, mount, quit; `RemoteSdBlockDevice` |
+| `remotesd` | `RemoteSdSession`: sectors, peek, mount, working directory, quit; `RemoteSdBlockDevice` |
 | `block` | `BlockDevice`, image files, caching, fail-fast wrapper |
 | `fat32` | `Fat32Volume`: the complete FAT32 implementation on any `BlockDevice` |
 

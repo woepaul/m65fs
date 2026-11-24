@@ -36,6 +36,9 @@ mega65-tools checkout, cc65 or Ophis.
 - **Transfer helper:** `helper.prg`, 2.7 KB instead of `remotesd_eth.prg`'s 13 KB, same
   protocol on the wire. Started without a reset (START's jump mode), uses no ROM, copies by
   DMA, checksums with 32-bit additions.
+  Like `remotesd_eth`, it answers the last sector of a write batch only after the whole batch
+  is written and read back, so a finished write is on the card (the first version answered
+  first and wrote afterwards).
 - **`c64boot.prg`:** assembled with ACME (byte-identical).
 - The never-used cartridge detection option is gone.
 

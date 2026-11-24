@@ -564,7 +564,7 @@ batch:  cmp #128
         inc b_active
 +       lda RXBUF + F_ARG
         cmp b_counter
-        bne ack                 ; another batch: acknowledge only
+        lbne ack                 ; another batch: acknowledge only
         ldx RXBUF + F_ARG + 2   ; slot
         cpx b_max
         beq +
@@ -589,8 +589,11 @@ batch:  cmp #128
         +set32 dma_src, RXBUF + F_PL + 14
         jsr dma_copy512
         dec b_left
+        beq +
         jsr ack                 ; acknowledge first, then write what is in order
         jmp flush
++       jsr flush               ; last sector: write and read back the whole batch before the
+        jmp ack                 ; answer, so that the host only goes on once it is on the card
 
 ack:    ldx #6                  ; answer: counter, size - 1, slot, start (as received)
 -       lda RXBUF + F_ARG,x
