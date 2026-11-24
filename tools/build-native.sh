@@ -39,8 +39,11 @@ if [[ -z "${GRAALVM_HOME:-}" ]]; then
     exec "$0" "$@"
   fi
 fi
-NI="$GRAALVM_HOME/bin/native-image"
-[[ -x "$NI" ]] || { echo "native-image not found in $GRAALVM_HOME" >&2; exit 1; }
+NI=""
+for n in native-image native-image.cmd native-image.exe; do   # (.cmd on Windows)
+  [[ -f "$GRAALVM_HOME/bin/$n" ]] && { NI="$GRAALVM_HOME/bin/$n"; break; }
+done
+[[ -n "$NI" ]] || { echo "native-image not found in $GRAALVM_HOME/bin" >&2; exit 1; }
 
 echo "== jar"
 (cd "$HERE" && ./mvnw -q -DskipTests package)
