@@ -4,7 +4,7 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
-## Unreleased
+## 0.1.2 (2026-11-24)
 
 - Fixed: the working directory was lost on every command in 0.1.0 and 0.1.1 (`m65.cd c64`,
   then `m65.ls` listed `/`). The quick check of the remembered address triggers the
