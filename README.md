@@ -221,7 +221,10 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   relative card paths start. This needs a hypervisor with `trap_dos_getcwd` and
   `trap_dos_restorecwd` (see below); otherwise relative paths start at `/` and `m65.cd`
   reports an error. `m65.boot`, `m65.run` and `m65.reset` keep it too: BASIC starts in it.
-- **Environment variables:** `M65_TARGET=fe80::…%if` (default: discovery),
+- **Finding the MEGA65:** the tools remember its address in `~/.cache/m65fs/target` and check
+  it with a quick trigger (a few ms); only if that fails do they wait for its beacon (sent once
+  a second) and prefer a wired interface over WLAN. `M65_TARGET` skips all of that.
+- **Environment variables:** `M65_TARGET=fe80::…%if` (default: remembered or discovered),
   `M65_IMAGE=card.img` (an SD card image instead of a MEGA65) and `M65_RESET=1` (reset after
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
   `m65.boot` or `m65.run`).

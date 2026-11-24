@@ -2,6 +2,7 @@ package io.github.paw.m65fs.etherload;
 
 import io.github.paw.m65fs.transport.Mega65TimeoutException;
 import io.github.paw.m65fs.transport.SlidingWindow;
+import io.github.paw.m65fs.transport.Target;
 import io.github.paw.m65fs.transport.UdpLink;
 import io.github.paw.m65fs.transport.WindowProtocol;
 import java.io.IOException;
@@ -97,6 +98,22 @@ public final class Etherload {
         }
         LOG.log(Level.DEBUG, "no answer to trigger, retrying");
       }
+    }
+  }
+
+  /**
+   * Whether a MEGA65 at {@code target} answers a trigger and a ping within {@code timeout}: a
+   * quick check of a remembered address (no retries; right after a reset the hypervisor may
+   * still ignore the trigger, then this says no).
+   */
+  public static boolean answers(Target target, Duration timeout) throws IOException {
+    try (UdpLink link = UdpLink.open(target)) {
+      Etherload e = on(link);
+      e.triggerHyperrupt();
+      e.ping(timeout);
+      return true;
+    } catch (Mega65TimeoutException e) {
+      return false;
     }
   }
 

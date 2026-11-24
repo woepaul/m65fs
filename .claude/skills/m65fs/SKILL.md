@@ -39,7 +39,7 @@ directory on purpose; run `m65.pwd` first when a relative path matters.
 
 | Variable | Meaning |
 |---|---|
-| `M65_TARGET=fe80::…%eth0` | Address of the MEGA65 (default: found automatically) |
+| `M65_TARGET=fe80::…%eth0` | Address of the MEGA65 (default: remembered in `~/.cache/m65fs/target` from the last discovery, which prefers wired interfaces) |
 | `M65_IMAGE=card.img` | Work on an SD card image file instead of a MEGA65 (file tools only) |
 | `M65_RESET=1` | Reset the MEGA65 after each file tool. By default it keeps showing the transfer screen until `m65.reset`, `m65.boot` or `m65.run` |
 

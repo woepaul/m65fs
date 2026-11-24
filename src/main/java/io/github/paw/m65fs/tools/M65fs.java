@@ -1,5 +1,6 @@
 package io.github.paw.m65fs.tools;
 
+import io.github.paw.m65fs.etherload.Etherload;
 import io.github.paw.m65fs.etherload.Etherload.Video;
 import io.github.paw.m65fs.launch.MachineMode;
 import io.github.paw.m65fs.launch.Mega65Launcher;
@@ -688,11 +689,15 @@ public final class M65fs {
   private int defrag(List<String> a) {
     List<String> args = new ArrayList<>(a);
     String image = env.get("M65_IMAGE");
-    String target = env.get("M65_TARGET");
     if (image != null && !image.isBlank()) {
       args.addAll(0, List.of("--image", image));
-    } else if (target != null && !target.isBlank()) {
-      args.addAll(0, List.of("--target", target));
+    } else {
+      try {
+        args.addAll(0, List.of("--target", machine()));
+      } catch (IOException e) {
+        err.println(prog + ": " + describe(e));
+        return 2;
+      }
     }
     if (!resetAfter()) {
       args.addFirst("--no-reset");
@@ -796,9 +801,7 @@ public final class M65fs {
 
   private int discover(List<String> a) throws IOException {
     noOperands(a);
-    Target t = Mega65Locator.discover(Duration.ofSeconds(3)).orElseThrow(() -> new IOException(
-        "no MEGA65 found (remote mode on? DIP switch 2 or SHIFT+£)"));
-    out.println(t.address().getHostAddress().replaceFirst("%.*", "") + "%" + t.networkInterface().getName());
+    out.println(discoverAndRemember());
     return 0;
   }
 
@@ -844,10 +847,7 @@ public final class M65fs {
     if (image != null && !image.isBlank()) {
       return (Mega65FileSystem) FileSystems.newFileSystem(Path.of(image), e);
     }
-    String target = env.get("M65_TARGET");
-    if (target != null && !target.isBlank()) {
-      e.put("target", target);
-    }
+    e.put("target", machine());
     return (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
   }
 
@@ -859,12 +859,60 @@ public final class M65fs {
   }
 
   private Target target() throws IOException {
+    return Target.parse(machine());
+  }
+
+  /**
+   * The MEGA65's address ({@code fe80::…%if}): {@code M65_TARGET}; else the address remembered
+   * from the last discovery, if it is on a wired interface and answers a quick trigger and
+   * ping; else discovery, which waits for the MEGA65's beacon (sent once a second), prefers a
+   * wired interface and remembers the result.
+   */
+  private String machine() throws IOException {
     String t = env.get("M65_TARGET");
     if (t != null && !t.isBlank()) {
-      return Target.parse(t);
+      return t;
     }
-    return Mega65Locator.discover(Duration.ofSeconds(3)).orElseThrow(() -> new IOException(
+    Path cache = targetCache();
+    if (cache != null) {
+      try {
+        String remembered = Files.readString(cache).strip();
+        Target r = remembered.isEmpty() ? null : Target.parse(remembered);
+        if (r != null && r.networkInterface() != null && !Mega65Locator.isWireless(r.networkInterface())
+            && Etherload.answers(r, Duration.ofMillis(300))) {
+          return remembered;
+        }
+      } catch (IOException | IllegalArgumentException e) {
+        // no usable remembered address: discover
+      }
+    }
+    return discoverAndRemember();
+  }
+
+  private String discoverAndRemember() throws IOException {
+    Target found = Mega65Locator.discover(Duration.ofSeconds(3)).orElseThrow(() -> new IOException(
         "no MEGA65 found (remote mode on? DIP switch 2 or SHIFT+£)"));
+    String t = found.address().getHostAddress().replaceFirst("%.*", "") + "%" + found.networkInterface().getName();
+    Path cache = targetCache();
+    if (cache != null) {
+      try {
+        Files.createDirectories(cache.getParent());
+        Files.writeString(cache, t + "\n");
+      } catch (IOException e) {
+        // remembering is only an optimisation
+      }
+    }
+    return t;
+  }
+
+  /** {@code $XDG_CACHE_HOME/m65fs/target} or {@code ~/.cache/m65fs/target}; null without either. */
+  private Path targetCache() {
+    String xdg = env.get("XDG_CACHE_HOME");
+    if (xdg != null && !xdg.isBlank()) {
+      return Path.of(xdg, "m65fs", "target");
+    }
+    String home = env.get("HOME");
+    return home == null || home.isBlank() ? null : Path.of(home, ".cache", "m65fs", "target");
   }
 
   /**
@@ -1003,7 +1051,8 @@ public final class M65fs {
           m65.discover                        print the MEGA65's address
 
         environment
-          M65_TARGET=fe80::...%eth0           MEGA65 address (default: found automatically)
+          M65_TARGET=fe80::...%eth0           MEGA65 address (default: found automatically
+                                              and remembered in ~/.cache/m65fs/target)
           M65_IMAGE=card.img                  use an SD card image instead of a MEGA65
           M65_RESET=1                         reset the MEGA65 after each file command
                                               (default: it keeps showing the transfer screen

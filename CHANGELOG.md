@@ -49,8 +49,20 @@ Measured on a MEGA65 over 100 Mbit Ethernet against `mega65_ftp -e` (version
 | read 4 MiB | 4.99 s (821 KiB/s) | 4.28 s (957 KiB/s) | 14 % less time |
 | list `/` (incl. session start) | 0.83 s (2 of 8 runs failed) | 0.46 s | 45 % less time |
 
-Session starts vary by up to a second in both tools (the hypervisor sometimes answers the
-trigger late). An 8 x 4 MiB write/read endurance run (2.5 minutes) passed without errors.
+Session starts varied by up to a second in both tools: each waited for the MEGA65's beacon,
+see "Faster command start" below. An 8 x 4 MiB write/read endurance run (2.5 minutes) passed
+without errors.
+
+### Faster command start
+
+- Every command used to wait for the MEGA65's beacon (sent once a second): 0.2–1.7 s before
+  anything happened. The tools now remember the address (`~/.cache/m65fs/target`) and check
+  it with a quick trigger and ping instead; discovery only runs when that fails (another
+  MEGA65, another interface) and refreshes the remembered address. `m65.pwd` now takes
+  0.05 s, `m65.ls /` 0.08 s (against 0.85 s for `mega65_ftp -e -c dir`, median of 5).
+- Discovery prefers a wired interface: a MEGA65 heard over WLAN is only taken if no wired
+  interface hears it within one beacon period (reading 4 MiB took 4.15 s wired, 4.64 s over
+  WLAN). A remembered WLAN address is not reused without checking for a wired one.
 
 ### Tooling
 

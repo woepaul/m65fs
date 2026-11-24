@@ -11,6 +11,8 @@ import java.net.SocketAddress;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -37,9 +39,12 @@ public final class Mega65Locator {
   public static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(2500);
 
   /**
-   * Listens on all up, non-loopback interfaces with a link-local IPv6 address.
+   * Listens on all up, non-loopback interfaces with a link-local IPv6 address. A MEGA65 is
+   * often heard on several interfaces (wired and WLAN on the same network): a beacon heard over
+   * a wireless interface is only taken if no wired one brings a beacon within one beacon period
+   * ({@link #WIRED_GRACE}), since the wired path is faster and loses fewer packets.
    *
-   * @return the first MEGA65 heard from, or empty if none within {@code timeout}
+   * @return the MEGA65 heard from, or empty if none within {@code timeout}
    */
   public static Optional<Target> discover(Duration timeout) throws IOException {
     List<NetworkInterface> nifs = candidateInterfaces();
@@ -66,13 +71,14 @@ public final class Mega65Locator {
 
       ByteBuffer buf = ByteBuffer.allocate(2048);
       long deadline = System.nanoTime() + timeout.toNanos();
+      Target wireless = null;
       while (true) {
         buf.clear();
         SocketAddress from = ch.receive(buf);
         if (from == null) {
           long left = deadline - System.nanoTime();
           if (left <= 0) {
-            return Optional.empty();
+            return Optional.ofNullable(wireless);
           }
           sel.select(Math.max(1, left / 1_000_000));
           sel.selectedKeys().clear();
@@ -88,12 +94,31 @@ public final class Mega65Locator {
           NetworkInterface nif = NetworkInterface.getByIndex(v6.getScopeId());
           if (nif != null) {
             Target t = Target.of(v6, nif);
-            LOG.log(Level.DEBUG, "found MEGA65 at {0}", t);
-            return Optional.of(t);
+            if (!isWireless(nif)) {
+              LOG.log(Level.DEBUG, "found MEGA65 at {0}", t);
+              return Optional.of(t);
+            }
+            if (wireless == null) {
+              LOG.log(Level.DEBUG, "found MEGA65 at {0} (wireless; waiting for a wired interface)", t);
+              wireless = t;
+              deadline = Math.min(deadline, System.nanoTime() + WIRED_GRACE.toNanos());
+            }
           }
         }
       }
     }
+  }
+
+  /** How long a wired interface may take to bring a beacon after a wireless one did. */
+  static final Duration WIRED_GRACE = Duration.ofMillis(1200);
+
+  /** Linux: {@code /sys/class/net/IF/wireless}; elsewhere: names starting with "wl". */
+  public static boolean isWireless(NetworkInterface nif) {
+    Path sys = Path.of("/sys/class/net", nif.getName(), "wireless");
+    if (Files.isDirectory(Path.of("/sys/class/net"))) {
+      return Files.exists(sys);
+    }
+    return nif.getName().startsWith("wl");
   }
 
   static List<NetworkInterface> candidateInterfaces() throws IOException {
