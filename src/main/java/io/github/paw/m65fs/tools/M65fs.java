@@ -99,7 +99,11 @@ public final class M65fs {
     return args;
   }
 
-  /** argv[0] in the native image; {@code null} on the JVM (where it is always "java"). */
+  /**
+   * argv[0] in the native image; {@code null} on the JVM (where it is always "java") and on
+   * Windows, where native images can't read it (there the m65.COMMAND.cmd wrappers pass the
+   * command as the first argument instead).
+   */
   private static String programName() {
     if ("runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))) {
       return NativeImage.programName();
@@ -110,7 +114,11 @@ public final class M65fs {
   /** Separate class so the GraalVM SDK (compile-time only) is never touched on the JVM. */
   private static final class NativeImage {
     static String programName() {
-      return org.graalvm.nativeimage.ProcessProperties.getArgumentVectorProgramName();
+      try {
+        return org.graalvm.nativeimage.ProcessProperties.getArgumentVectorProgramName();
+      } catch (UnsupportedOperationException e) {
+        return null; // Windows: "Argument vector support not available"
+      }
     }
   }
 
