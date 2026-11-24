@@ -47,7 +47,15 @@ jobs:
         run: ./mvnw -B -q versions:set -DnewVersion="${{ inputs.version }}" -DgenerateBackupPoms=false
 
       - name: Build
-        run: tools/build-native.sh
+        run: |
+          set -o pipefail
+          tools/build-native.sh 2>&1 | tee build.log
+
+      - name: Show the end of the build log as an annotation (readable without signing in)
+        if: failure()
+        run: |
+          msg=$(tail -n 60 build.log | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=build-native.sh (${{ matrix.platform }})::$msg"
 
       - name: Smoke test
         run: |
