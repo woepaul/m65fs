@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Packages the native binary built by tools/build-native.sh for a release, with README.md,
-# LICENSE and CHANGELOG.md:
-#   target/dist/m65-VERSION-linux-amd64.tar.gz      m65 and the m65.* links
+# Packages the native binary built by tools/build-native.sh for a release:
+#   target/dist/m65-VERSION-linux-amd64.tar.gz      bin/m65 and the bin/m65.* links
 #   target/dist/m65-VERSION-linux-aarch64.tar.gz
 #   target/dist/m65-VERSION-macos-aarch64.tar.gz
-#   target/dist/m65-VERSION-windows-amd64.zip       m65.exe and m65.*.cmd wrappers
+#   target/dist/m65-VERSION-windows-amd64.zip       bin/m65.exe and the bin/m65.*.cmd wrappers
+# each in a directory m65-VERSION-PLATFORM/ with README.md, LICENSE and CHANGELOG.md.
 #
 # Usage: tools/package-release.sh VERSION   (prints the archive's path)
 set -euo pipefail
@@ -24,11 +24,11 @@ NAME="m65-$V-$P"
 DIST="$HERE/target/dist"
 STAGE="$DIST/$NAME"
 rm -rf "$STAGE"
-mkdir -p "$STAGE"
+mkdir -p "$STAGE/bin"
 cp "$HERE/README.md" "$HERE/LICENSE" "$HERE/CHANGELOG.md" "$STAGE/"
 
 if [[ $P == windows-* ]]; then
-  cp "$HERE/target/native/m65.exe" "$HERE"/target/native/m65.*.cmd "$STAGE/"
+  cp "$HERE/target/native/m65.exe" "$HERE"/target/native/m65.*.cmd "$STAGE/bin/"
   rm -f "$DIST/$NAME.zip"
   if command -v 7z >/dev/null; then   # standard "/" separators (Compress-Archive writes "\")
     (cd "$DIST" && 7z a -tzip "$NAME.zip" "$NAME" >/dev/null)
@@ -37,7 +37,7 @@ if [[ $P == windows-* ]]; then
   fi
   echo "$DIST/$NAME.zip"
 else
-  cp -P "$HERE/target/native/m65" "$HERE"/target/native/m65.* "$STAGE/"   # -P: keep the links
+  cp -P "$HERE/target/native/m65" "$HERE"/target/native/m65.* "$STAGE/bin/"   # -P: keep the links
   tar -C "$DIST" -czf "$DIST/$NAME.tar.gz" "$NAME"
   echo "$DIST/$NAME.tar.gz"
 fi
