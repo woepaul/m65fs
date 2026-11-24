@@ -1,12 +1,16 @@
-# m65fs ethlets
+# m65fs' MEGA65 code
 
-The small 45GS02 programs ("ethlets") that m65fs sends to a MEGA65 over Ethernet to load data
-into memory and to start programs. Sources: `src/main/asm/ethlets/` (ACME 0.97, `--cpu m65`),
-built by `tools/build-ethlets.sh` into `src/main/resources/io/github/paw/m65fs/blobs/`. The
-Java side is `io.github.paw.m65fs.etherload.Ethlet` (field offsets) and `Etherload`.
+Everything m65fs runs on the MEGA65 is its own 45GS02 assembly in `src/main/asm/`, built with
+ACME 0.97 (`--cpu m65`) by `tools/build-blobs.sh` into
+`src/main/resources/io/github/paw/m65fs/blobs/`:
 
-They replace mega65-tools' etherload ethlets for m65fs: three instead of five, only what m65fs
-uses, and using the 45GS02 and the DMA controller where that makes them shorter or faster.
+* three **ethlets** (ECHO, LOAD, START), run by the hypervisor's `ETHLOAD.M65`;
+* the **transfer helper** `helper.prg`, which serves the SD card during file commands;
+* the C64 disk boot loader `c64boot.prg`.
+
+They replace mega65-tools' five etherload ethlets and `remotesd_eth.prg`, keep their
+protocols on the wire, and do only what m65fs uses. Java side: `etherload.Ethlet` (field
+offsets), `etherload.Etherload`, `remotesd.RemoteSdSession` / `Request` / `Response`.
 
 ## Environment
 
@@ -90,3 +94,32 @@ interrupt restores all of it, sets the end pointer ($82/$83), types RUN and cont
 BASIC's handler. If the ROM still points at the hook (an attempt whose hook never ran), the
 handler address saved then (at $2C7F0) is kept instead of saving the hook's own address.
 Works with a disk attached, too.
+
+## Transfer helper (`helper.prg`, 2.7 KB)
+
+Loaded to $0800 with LOAD packets and started with START's jump mode (no ROM initialisation,
+so a file command needs no reset). It switches to the MEGA65 I/O personality and 40 MHz, runs
+with interrupts off and uses nothing from the ROM. On start it returns to the working directory
+the trigger saved (`$4C`).
+
+The protocol is remotesd_eth's (`"mreq"` / `"mrsp"`, sequence number, opcode over UDP port
+4510), restricted to what `RemoteSdSession` uses:
+
+| Opcode | Request | Answer |
+|---|---|---|
+| $FD hello | locks the session to the sender's address and port (a repeated hello from it is answered again) | header |
+| $04 read | up to 128 sectors | one answer per sector, consecutive sequence numbers; the next sector is read from the card while the current one is sent |
+| $02 write | one sector (written and read back right away), or one sector of a batch of 2..128 | acknowledged on arrival; batch sectors go into a cache at $40000 and are written in order as they arrive (multi-sector write), then read back and compared |
+| $11 memory | up to 256 bytes at a 28-bit address | the bytes |
+| $12 mount | D81 name (changes to the root directory) | status |
+| $13 cwd | get, or set from a path | status, drive, cluster |
+| $FF quit | | header, then a reset into MEGA65 mode |
+
+It also answers IPv6 neighbor solicitations for its own address (without that, the computer
+stops sending to the MEGA65 once its neighbor entry expires).
+
+Frames are copied from the Ethernet buffer into RAM by DMA, checked (addresses, port, UDP
+checksum with 32-bit `ADCQ` additions) and answered from a frame template set up by hello.
+Sector data moves between the SD card buffer, the cache and the frames by DMA only. A protocol
+violation (read during a write batch, a duplicate with different data, a failed read-back)
+stops the helper with a message on its screen; the host then notices the silence.

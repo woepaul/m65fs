@@ -21,8 +21,8 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Simulates remotesd_eth on {@code [::1]}, backed by a {@link BlockDevice}. It mirrors the
- * helper's state machine from remotesd_eth.c (session lock on hello, single vs. batch writes,
+ * Simulates the transfer helper (src/main/asm/helper/helper.a) on {@code [::1]}, backed by a
+ * {@link BlockDevice}. It mirrors the helper's state machine (session lock on hello, single vs. batch writes,
  * batch counters, one read batch at a time, read/write mixing) and records every condition where
  * the real helper would call {@code stop_fatal()} in {@link #fatalErrors()} — after which it stops
  * answering, like the real thing.
@@ -59,7 +59,7 @@ public final class FakeRemoteSd implements AutoCloseable {
 
   // session
   private SocketAddress client;
-  // write state (names as in remotesd_eth.c)
+  // write state
   private int currentBatchCounter = 0xff;
   private boolean writeBatchActive;
   private int writeBatchMaxId;
@@ -274,8 +274,7 @@ public final class FakeRemoteSd implements AutoCloseable {
         return;
       }
       if (outdated(currentBatchCounter, counter)) {
-        fatal.add("error: outdated batch counter");
-        return;
+        return; // late retransmission: the host has the answer already, ignored
       }
       currentBatchCounter = counter;
       dev.write(start + slot, ByteBuffer.wrap(data));

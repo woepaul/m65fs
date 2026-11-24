@@ -49,7 +49,7 @@ class HardwareSmokeTest {
   }
 
   /**
-   * Uploads and starts remotesd_eth, then talks to it with a minimal hello + quit (the real
+   * Uploads and starts the transfer helper, then talks to it with a minimal hello + quit (the real
    * session client comes in M2). Quit resets the MEGA65.
    */
   @Test
@@ -66,7 +66,7 @@ class HardwareSmokeTest {
       boolean[] hello = new boolean[1];
       w.submit(mreq(0xfd), _ -> hello[0] = true, Duration.ofSeconds(3));
       w.awaitAll(Duration.ofSeconds(3));
-      assertTrue(hello[0], "hello acknowledged by remotesd_eth");
+      assertTrue(hello[0], "hello acknowledged by the helper");
       System.out.println("hello acknowledged");
       w.submit(mreq(0xff), _ -> {}, Duration.ofSeconds(3));
       w.awaitAll(Duration.ofSeconds(3));
@@ -535,7 +535,7 @@ class HardwareSmokeTest {
     return new byte[] {'m', 'r', 'e', 'q', 0, 0, (byte) opcode};
   }
 
-  /** Just enough of the remotesd_eth framing for hello/quit. */
+  /** Just enough of the helper's framing for hello/quit. */
   private static final WindowProtocol MINIMAL_MREQ = new WindowProtocol() {
     @Override
     public int seqOf(ByteBuffer rx) {

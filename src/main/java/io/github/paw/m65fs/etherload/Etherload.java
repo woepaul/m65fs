@@ -13,7 +13,7 @@ import java.util.Objects;
 /**
  * Talks to the MEGA65 hypervisor's Ethernet remote control (ETHLOAD.M65) by sending ethlets:
  * loads data into memory and starts programs, including the transfer helper
- * {@code remotesd_eth.prg}.
+ * {@code helper.prg}.
  */
 public final class Etherload {
 
@@ -285,9 +285,8 @@ public final class Etherload {
   }
 
   /**
-   * The complete bootstrap: trigger the hypervisor, ping, upload
-   * {@code prg} (a C64-style program file with 2-byte load address) to {@value #BASIC_START}
-   * and RUN it.
+   * The complete bootstrap: trigger the hypervisor, ping, upload {@code prg} (a program file
+   * with 2-byte load address) and start it at its load address.
    *
    * @throws Mega65TimeoutException with a hint if the MEGA65 does not answer the ping
    */
@@ -304,21 +303,20 @@ public final class Etherload {
   }
 
   /**
-   * Uploads {@code prg} (a program file loading at {@value #BASIC_START}) and RUNs it in C64
-   * mode; the hypervisor must already execute ethlets (see {@link #connect}).
+   * Uploads {@code prg} (a program file) and jumps to its load address (START's jump mode: no
+   * reset, no ROM initialisation; the helper sets up the machine itself). The hypervisor must
+   * already execute ethlets (see {@link #connect}).
    */
   public void startHelper(byte[] prg) throws IOException {
     checkHelper(prg);
     LOG.log(Level.DEBUG, "uploading helper routine ({0} bytes)", prg.length - 2);
-    int end = writeProgram(prg);
-    resetToC64(end, true, Reset.defaults());
+    writeProgram(prg);
+    jump(loadAddress(prg), null);
     LOG.log(Level.DEBUG, "helper routine started");
   }
 
   private static void checkHelper(byte[] prg) {
-    if (prg.length < 3 || WindowProtocol.le16(prg, 0) != BASIC_START) {
-      throw new IllegalArgumentException("not a program file loading at $0801");
-    }
+    loadAddress(prg);
   }
 
   /** Swaps in the single-command protocol for one packet. */
@@ -347,8 +345,8 @@ public final class Etherload {
     }
   }
 
-  /** The bundled {@code remotesd_eth.prg} (see blobs/PROVENANCE.txt). */
+  /** The bundled transfer helper {@code helper.prg} (src/main/asm/helper/). */
   public static byte[] bundledHelper() {
-    return Ethlet.Blobs.read("remotesd_eth.prg");
+    return Ethlet.Blobs.read("helper.prg");
   }
 }

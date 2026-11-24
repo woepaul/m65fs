@@ -5,7 +5,7 @@ import io.github.paw.m65fs.transport.WindowProtocol;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 
-/** Answers from remotesd_eth: header {@code "mrsp", seq (LE16), opcode}. */
+/** Answers from the transfer helper: header {@code "mrsp", seq (LE16), opcode}. */
 public sealed interface Response {
 
   int seq();
@@ -32,7 +32,7 @@ public sealed interface Response {
    */
   record CwdResult(int seq, int status, int drive, int cluster) implements Response {}
 
-  /** Decodes a datagram, or returns empty if it is not a well-formed remotesd_eth answer. */
+  /** Decodes a datagram, or returns empty if it is not a well-formed answer. */
   static Optional<Response> parse(ByteBuffer rx) {
     ByteBuffer b = rx.slice();
     int len = b.remaining();

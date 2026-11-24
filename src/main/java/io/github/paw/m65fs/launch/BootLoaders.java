@@ -16,7 +16,7 @@ final class BootLoaders {
   private BootLoaders() {}
 
   /**
-   * C64 mode: the bundled {@code c64boot.prg} (source: src/main/asm/c64boot.a65), which does
+   * C64 mode: the bundled {@code c64boot.prg} (source: src/main/asm/c64boot.a), which does
    * {@code LOAD"name",8,1} and {@code RUN}. Its last 17 bytes are the name length and the name.
    */
   static byte[] c64(byte[] name) {

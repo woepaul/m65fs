@@ -20,7 +20,7 @@ import java.util.Random;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** The file system over the full network stack against the simulated remotesd_eth. */
+/** The file system over the full network stack against the simulated transfer helper. */
 class NetworkFileSystemTest {
 
   @Test

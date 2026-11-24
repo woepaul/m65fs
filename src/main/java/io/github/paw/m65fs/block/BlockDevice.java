@@ -5,7 +5,7 @@ import java.nio.ByteBuffer;
 
 /**
  * A device of 512-byte sectors addressed by absolute LBA: the SD card as seen through
- * remotesd_eth, or an image file.
+ * the transfer helper, or an image file.
  *
  * <p>Transfers always cover whole sectors: {@code buf.remaining()} must be a multiple of
  * {@link #SECTOR_SIZE}. On return the buffer's position has advanced by the bytes transferred.

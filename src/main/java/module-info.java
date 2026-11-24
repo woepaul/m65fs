@@ -1,6 +1,6 @@
 /**
  * Java NIO file system for the MEGA65 SD card, accessed over Ethernet using the
- * {@code mega65_ftp -e} protocol.
+ * hypervisor's Ethernet remote control and m65fs' own transfer helper.
  *
  * <p>Entry point: {@code FileSystems.newFileSystem(URI.create("mega65://auto/"), Map.of())}.
  */

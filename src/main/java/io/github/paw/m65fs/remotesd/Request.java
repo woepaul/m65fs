@@ -8,7 +8,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Requests understood by remotesd_eth. Every request starts with the 7-byte header
+ * Requests understood by the transfer helper (src/main/asm/helper/; the protocol of mega65-tools'
+ * remotesd_eth). Every request starts with the 7-byte header
  * {@code "mreq", seq (LE16), opcode}; the sequence number is filled in by the sliding window.
  * All multi-byte fields are little-endian.
  */

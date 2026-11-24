@@ -5,8 +5,8 @@ description: Work with a MEGA65 computer over Ethernet using the m65 tools (m65.
 
 # m65fs: MEGA65 over Ethernet
 
-m65fs speaks the MEGA65's Ethernet protocols (the same ones `mega65_ftp -e` and `etherload` use)
-from pure Java. All FAT32 handling runs on this computer, and **files are always written to the
+m65fs talks to the MEGA65 over Ethernet from pure Java, with its own small 45GS02 programs on the
+MEGA65 side (nothing to install there). All FAT32 handling runs on this computer, and **files are always written to the
 card contiguously** (some MEGA65 cores and the hypervisor cannot use fragmented files).
 
 ## The tools

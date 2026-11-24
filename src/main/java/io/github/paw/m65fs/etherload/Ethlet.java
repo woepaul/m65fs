@@ -8,8 +8,8 @@ import java.util.Objects;
 
 /**
  * The 45GS02 code blobs ("ethlets") that ETHLOAD.M65 executes straight out of a received UDP
- * payload. They are m65fs' own (src/main/asm/ethlets/, built by tools/build-ethlets.sh, see
- * docs/ethlets-spec.md): each image is exactly one payload, with its parameter fields at fixed
+ * payload. They are m65fs' own (src/main/asm/ethlets/, built by tools/build-blobs.sh, see
+ * docs/mega65-code.md): each image is exactly one payload, with its parameter fields at fixed
  * offsets (the constants below, checked by the sources) and the 16-bit sequence number filled
  * in by the host. The MEGA65 answers every ethlet with the unchanged payload.
  */

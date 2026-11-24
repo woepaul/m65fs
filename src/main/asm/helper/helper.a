@@ -1,0 +1,1159 @@
+; helper.a -- the m65fs transfer helper (part of m65fs, GPL-3).
+;
+; Serves the MEGA65's SD card to m65fs over Ethernet: the protocol of mega65-tools'
+; remotesd_eth ("mreq"/"mrsp" over UDP port 4510, IPv6 link-local), restricted to what m65fs
+; uses (see io.github.paw.m65fs.remotesd.Request and Response):
+;   $FD hello        locks the session to the sender (address and port)
+;   $04 read         up to 128 sectors, one answer per sector
+;   $02 write        one sector, or one sector of a batch of 2..128 (written in order as the
+;                    sectors arrive, read back and compared when the batch is complete)
+;   $11 memory       read up to 256 bytes at a 28-bit address
+;   $12 mount        attach a D81 from the root directory as drive 0
+;   $13 cwd          report (and set) the hypervisor's working directory
+;   $FF quit         answer, then reset into MEGA65 mode
+; and answers IPv6 neighbor solicitations for its own address.
+;
+; Started with the START ethlet's jump mode (no ROM initialisation), at its load address.
+; Runs with interrupts off and needs nothing from the ROM. Copies are done by DMA, UDP
+; checksums with 32-bit additions (ADCQ).
+;
+; Assemble with ACME: acme --cpu m65 -f cbm -o helper.prg helper.a
+
+!cpu m65
+
+; ---------------------------------------------------------------- memory
+SCREEN  = $0400
+RXLEN   = $1ffe                 ; DMA copy of the RX buffer: 2 length bytes,
+RXBUF   = $2000                 ; then the received frame
+TXBUF   = $2400                 ; reply frame (Ethernet, IPv6, UDP, payload)
+NDBUF   = $2700                 ; neighbor advertisement frame
+VBUF1   = $2800                 ; 512-byte compare buffers
+VBUF2   = $2a00
+NAMEBUF = $2c00                 ; file/directory name for the hypervisor (page aligned)
+FLAGS   = $2d00                 ; per batch slot: sector received
+CACHE   = $40000                ; batch sectors (128 x 512 bytes)
+ETHBUF  = $ffde800              ; Ethernet buffer: RX when read (length first), TX when written
+SDBUF   = $ffd6e00              ; SD card sector buffer
+COLRAM  = $ff80000
+
+RXCOPY  = 2 + 600               ; bytes copied from the RX buffer (largest frame: 588 + padding)
+
+; frame offsets (RXBUF and TXBUF alike)
+F_ETHSRC = 6
+F_TYPE   = 12
+F_IPLEN  = 18
+F_NH     = 20
+F_IPSRC  = 22
+F_IPDST  = 38
+F_UDP    = 54                   ; source port, destination port, length, checksum
+F_PL     = 62                   ; UDP payload: "mreq"/"mrsp", sequence number, opcode, ...
+F_SEQ    = 66
+F_OP     = 68
+F_ARG    = 69                   ; payload offset 7
+PORT     = 4510
+
+; ---------------------------------------------------------------- zero page
+dma_src  = $02                  ; 28-bit addresses for dma_copy / dma_fill (4 bytes each)
+dma_dst  = $06
+dma_len  = $0a                  ; 2
+cs_ptr   = $0c                  ; checksum: data pointer (2), dword count (1)
+cs_cnt   = $0e
+sum      = $10                  ; 4
+csum     = $14                  ; 2: folded one's complement sum (little-endian over the data)
+plen     = $16                  ; 2: reply payload length
+client   = $18                  ; nonzero once hello locked the session
+b_active = $19                  ; write batch
+b_counter = $1a
+b_max    = $1b                  ; batch size - 1
+b_left   = $1c                  ; sectors still to receive
+b_written = $1d                 ; next slot to write to the card
+b_start  = $1e                  ; 4: first sector of the batch
+r_left   = $22                  ; read batch: sectors left
+r_sector = $23                  ; 4
+tmp      = $27                  ; 4
+ulen     = $2b                  ; 2: UDP length of the request
+ptr      = $2d                  ; 2
+cmd      = $2f
+
+; ---------------------------------------------------------------- macros
+!macro hyppo .call {
+        lda #.call
+        sta $d640
+        clv
+}
+
+!macro set32 .var, .value {     ; .var = 32-bit constant
+        lda #<.value
+        ldx #>.value
+        ldy #^.value
+        ldz #(.value >> 24) & $ff
+        stq .var
+        ldz #$00
+}
+
+; copy .len bytes .src -> .dst (28-bit constants)
+!macro copy .src, .dst, .len {
+        +set32 dma_src, .src
+        +set32 dma_dst, .dst
+        lda #<.len
+        ldx #>.len
+        sta dma_len
+        stx dma_len + 1
+        jsr dma_copy
+}
+
+* = $0800
+entry:
+        sei
+        cld
+        lda #$47                ; MEGA65 I/O personality
+        sta $d02f
+        lda #$53
+        sta $d02f
+        lda #65                 ; 40 MHz
+        sta $00
+        lda #$00
+        tab                     ; base page 0
+        taz
+        ldx #$7f                ; zero page variables
+-       sta $02,x
+        dex
+        bpl -
+        dec b_counter           ; $FF: no batch seen yet
+        lda #$75                ; Ethernet: RX/TX on, multicast and broadcast, no promiscuous
+        sta $d6e5               ; mode (as ETHLOAD)
+        lda #$80
+        tsb $d689               ; SD controller: its own sector buffer, not the floppy's
+        +hyppo $4c              ; back to the working directory the trigger saved (patched
+                                ; hypervisors; others just fail)
+        jsr init_screen
+        jsr init_frames
+
+main:   lda $d6e1
+        and #$20                ; frame received?
+        beq main
+        lda #$01                ; acknowledge it, show it in the RX buffer
+        sta $d6e1
+        lda #$03
+        sta $d6e1
+        +copy ETHBUF, RXLEN, RXCOPY
+        jsr dispatch
+        bra main
+
+; ---------------------------------------------------------------- frame dispatch
+dispatch:
+        lda RXBUF + F_TYPE
+        cmp #$86
+        bne .out
+        lda RXBUF + F_TYPE + 1
+        cmp #$dd
+        bne .out
+        lda RXBUF + F_NH
+        cmp #58
+        lbeq icmp
+        cmp #17
+        bne .out
+        ldx #15                 ; UDP to our address and port
+-       lda RXBUF + F_IPDST,x
+        cmp ip_local,x
+        bne .out
+        dex
+        bpl -
+        lda RXBUF + F_UDP + 2
+        cmp #>PORT
+        bne .out
+        lda RXBUF + F_UDP + 3
+        cmp #<PORT
+        bne .out
+        lda RXBUF + F_UDP + 5   ; UDP length (big-endian): 15..543 (fits the RX copy)
+        sta ulen
+        sta tmp
+        lda RXBUF + F_UDP + 4
+        sta ulen + 1
+        sta tmp + 1
+        beq +
+        cmp #2
+        bcc .lenok
+        bne .out
+        lda ulen
+        cmp #$20
+        bcc .lenok
+.out:   rts
++       lda ulen
+        cmp #15
+        bcc .out
+.lenok: ldx #3                  ; "mreq"
+-       lda RXBUF + F_PL,x
+        cmp mreq,x
+        bne .out
+        dex
+        bpl -
+        ; checksum: pad with zeros, then sum pseudo header + UDP
+        lda #<(RXBUF + F_UDP)
+        clc
+        adc ulen
+        sta ptr
+        lda #>(RXBUF + F_UDP)
+        adc ulen + 1
+        sta ptr + 1
+        lda #$00
+        ldy #2
+-       sta (ptr),y
+        dey
+        bpl -
+        lda #<(RXBUF + F_IPSRC)
+        ldx #>(RXBUF + F_IPSRC)
+        jsr checksum_udp
+        lda csum
+        and csum + 1
+        cmp #$ff
+        bne .out                ; wrong checksum (or a frame with a CRC error): dropped
+        inc SCREEN + 39         ; activity
+        lda RXBUF + F_OP
+        cmp #$fd
+        lbeq op_hello
+        ldx client              ; everything else only from the locked client
+        beq .out
+        jsr same_client
+        bne .out
+        lda RXBUF + F_OP
+        cmp #$02
+        lbeq op_write
+        cmp #$04
+        lbeq op_read
+        cmp #$11
+        lbeq op_memory
+        cmp #$12
+        lbeq op_mount
+        cmp #$13
+        lbeq op_cwd
+        cmp #$ff
+        lbeq op_quit
+        rts
+
+; Z set if the request comes from the locked client (address and port)
+same_client:
+        ldx #15
+-       lda RXBUF + F_IPSRC,x
+        cmp TXBUF + F_IPDST,x
+        bne +
+        dex
+        bpl -
+        lda RXBUF + F_UDP
+        cmp TXBUF + F_UDP + 2
+        bne +
+        lda RXBUF + F_UDP + 1
+        cmp TXBUF + F_UDP + 3
++       rts
+
+mreq:   !text "mreq"
+mrsp:   !text "mrsp"
+
+; ---------------------------------------------------------------- requests
+op_hello:
+        lda client
+        beq +
+        jsr same_client
+        bne ++                  ; another client: ignored
+        bra reply7              ; repeated hello (answer lost): answer again
++       ldx #5                  ; lock: the client's MAC, address and port go into the reply
+-       lda RXBUF + F_ETHSRC,x  ; frame
+        sta TXBUF,x
+        dex
+        bpl -
+        ldx #15
+-       lda RXBUF + F_IPSRC,x
+        sta TXBUF + F_IPDST,x
+        dex
+        bpl -
+        lda RXBUF + F_UDP
+        sta TXBUF + F_UDP + 2
+        lda RXBUF + F_UDP + 1
+        sta TXBUF + F_UDP + 3
+        inc client
+        ldx #msg_connected - msgs
+        jsr status
+reply7: lda #7
+        jmp reply
+++      rts
+
+op_quit:
+        lda #7
+        jsr reply
+        jsr wait_tx             ; let the answer leave
+        ldx #$00
+        ldy #$40
+-       dex
+        bne -
+        dey
+        bne -
+        ; reset into MEGA65 mode, as the START ethlet does
+        lda #$00
+        ldx #$0f
+        tay
+        ldz #$0f
+        map
+        tax
+        taz
+        map
+        eom
+        lda #$3f
+        sta $00
+        sta $01
+        lda #$40
+        sta $00
+        ldx #$ff
+        txs
+        ldy #$01
+        tys
+        see
+        sta $d02f               ; C64 I/O personality
+        jmp ($fffc)
+
+op_memory:
+        lda ulen
+        cmp #20
+        bne +
+        ldq RXBUF + F_ARG + 1   ; address
+        stq dma_src
+        stq TXBUF + F_ARG + 1
+        ldz #$00
+        +set32 dma_dst, TXBUF + F_PL + 12
+        lda RXBUF + F_ARG       ; count - 1
+        sta TXBUF + F_ARG
+        clc
+        adc #1
+        sta dma_len
+        lda #$00
+        adc #$00
+        sta dma_len + 1
+        jsr dma_copy
+        lda dma_len
+        clc
+        adc #12
+        sta plen
+        lda dma_len + 1
+        adc #$00
+        sta plen + 1
+        jmp reply_plen
++       rts
+
+op_mount:
+        ldx #0                  ; name: NUL-terminated, 1..63 characters
+-       lda RXBUF + F_ARG,x
+        sta NAMEBUF,x
+        beq +
+        inx
+        cpx #64
+        bne -
+        rts                     ; no NUL: dropped
++       cpx #0
+        beq ++
+        jsr cdroot
+        bcc +
+        ldy #>NAMEBUF
+        +hyppo $2e              ; setname
+        bcc +
+        +hyppo $40              ; attach as drive 0
++       lda #$00                ; status: 0 = mounted, 1 = error
+        rol
+        eor #$01
+        sta TXBUF + F_ARG
+        lda #8
+        jmp reply
+++      rts
+
+op_cwd:
+        lda RXBUF + F_ARG       ; mode
+        beq .get
+        cmp #1
+        bne .drop
+        ; set: cdroot, then setname/findfile/chdir for each name of the path
+        ldx #0
+-       lda RXBUF + F_ARG + 1,x
+        beq +
+        inx
+        bpl -
+.drop:  rts                     ; longer than 127 or no NUL: dropped
++       jsr cdroot
+        bcc .fail
+        ldx #0
+.name:  ldy #0
+-       lda RXBUF + F_ARG + 1,x
+        beq +
+        inx
+        cmp #'/'
+        beq +
+        sta NAMEBUF,y
+        iny
+        bra -
++       lda #$00
+        sta NAMEBUF,y
+        cpy #0
+        beq +                   ; empty name (leading, double or trailing '/')
+        phx
+        ldy #>NAMEBUF
+        +hyppo $2e              ; setname
+        bcc .failx
+        +hyppo $34              ; findfile
+        bcc .failx
+        +hyppo $0c              ; chdir
+        bcc .failx
+        plx
++       lda RXBUF + F_ARG + 1,x ; next character: NUL = end
+        bne .name
+.get:   +hyppo $0a              ; getcwd: cluster in Q
+        bcc .fail
+        stq TXBUF + F_ARG + 2
+        ldz #$00
+        +hyppo $04              ; current drive
+        sta TXBUF + F_ARG + 1
+        lda #$00
+        bra .status
+.failx: plx
+.fail:  cmp #$00                ; hypervisor error code (0: none given)
+        bne +
+        lda #$ff
++       ldx #$00
+        stx TXBUF + F_ARG + 1
+        stx TXBUF + F_ARG + 2
+        stx TXBUF + F_ARG + 3
+        stx TXBUF + F_ARG + 4
+        stx TXBUF + F_ARG + 5
+.status:
+        sta TXBUF + F_ARG
+        lda #13
+        jmp reply
+
+cdroot: +hyppo $04              ; current drive
+        tax
+        +hyppo $3c              ; cdroot
+        rts
+
+; ---------------------------------------------------------------- read sectors
+op_read:
+        lda ulen
+        cmp #21
+        bne +
+        lda RXBUF + F_ARG + 1   ; sector count > 256: not supported
+        bne +
+        lda b_active
+        beq ++
+        ldx #msg_mixed - msgs
+        jmp fatal
++
+.rrts:  rts
+++      lda RXBUF + F_ARG       ; count - 1
+        cmp #128
+        bcs .rrts
+        inc
+        sta r_left
+        ldq RXBUF + F_ARG + 2
+        stq r_sector
+        ldz #$00
+        lda RXBUF + F_SEQ
+        sta TXBUF + F_SEQ
+        lda RXBUF + F_SEQ + 1
+        sta TXBUF + F_SEQ + 1
+        lda #$04
+        sta TXBUF + F_OP
+        lda #$00
+        sta TXBUF + F_ARG
+        sta TXBUF + F_ARG + 1
+        jsr sd_read             ; first sector
+.next:  jsr sd_wait
+        +copy SDBUF, TXBUF + F_PL + 13, 512
+        ldq r_sector
+        stq TXBUF + F_ARG + 2
+        inq                     ; next sector
+        stq r_sector
+        ldz #$00
+        dec r_left
+        beq +
+        jsr sd_read             ; read the next sector while this one is sent
++       lda #<525
+        sta plen
+        lda #>525
+        sta plen + 1
+        jsr send
+        inc TXBUF + F_SEQ       ; consecutive sequence numbers
+        bne +
+        inc TXBUF + F_SEQ + 1
++
+        lda r_left
+        bne .next
+        rts
+
+; ---------------------------------------------------------------- write sectors
+op_write:
+        lda ulen + 1            ; 534 = $216
+        cmp #>534
+        lbne .ignore
+        lda ulen
+        cmp #<534
+        lbne .ignore
+        lda RXBUF + F_ARG + 1   ; batch size - 1
+        lbne batch
+        ; single sector, written and verified right away
+        lda b_active
+        beq +
+        jsr outdated
+        lbcs .ignore             ; late retransmission of an old batch
+        ldx #msg_conflict - msgs
+        jmp fatal
++       jsr outdated
+        lbcs .ignore             ; late retransmission (the host has the answer already)
+        lda RXBUF + F_ARG
+        sta b_counter
+        lda RXBUF + F_ARG + 2   ; sector = start + slot
+        ldx #$00
+        ldy #$00
+        ldz #$00
+        clc
+        adcq RXBUF + F_ARG + 3
+        stq tmp
+        ldz #$00
+        jsr sd_wait
+        +copy RXBUF + F_PL + 14, SDBUF, 512
+        jsr sd_sector
+        lda #$03                ; single sector write
+        jsr sd_write
+        jsr sd_wait
+        jsr sd_read_tmp         ; read back and compare
+        jsr sd_wait
+        +copy SDBUF, VBUF1, 512
+        +copy RXBUF + F_PL + 14, VBUF2, 512
+        jsr compare
+        beq +
+        ldx #msg_verify - msgs
+        jmp fatal
++       lda RXBUF + F_ARG       ; answer: counter, 0, 0, sector
+        sta TXBUF + F_ARG
+        lda #$00
+        sta TXBUF + F_ARG + 1
+        sta TXBUF + F_ARG + 2
+        ldq tmp
+        stq TXBUF + F_ARG + 3
+        ldz #$00
+        lda #14
+        jmp reply
+.ignore:
+        rts
+
+batch:  cmp #128
+        lbcs .ignore
+        lda b_active
+        bne +
+        lda RXBUF + F_ARG       ; counter
+        cmp b_counter
+        lbeq ack                 ; a batch that is complete already: just acknowledge
+        sta b_counter           ; new batch
+        lda RXBUF + F_ARG + 1
+        sta b_max
+        inc
+        sta b_left
+        ldq RXBUF + F_ARG + 3
+        stq b_start
+        ldz #$00
+        lda #$00
+        sta b_written
+        ldx #127
+-       sta FLAGS,x
+        dex
+        bpl -
+        inc b_active
++       lda RXBUF + F_ARG
+        cmp b_counter
+        bne ack                 ; another batch: acknowledge only
+        ldx RXBUF + F_ARG + 2   ; slot
+        cpx b_max
+        beq +
+        bcc +
+        ldx #msg_slot - msgs
+        jmp fatal
++       jsr cache_addr          ; dma_dst = cache slot X
+        lda FLAGS,x
+        beq +
+        ; duplicate: must carry the same data
+        ldq dma_dst
+        stq dma_src
+        ldz #$00
+        +set32 dma_dst, VBUF1
+        jsr dma_copy512
+        +copy RXBUF + F_PL + 14, VBUF2, 512
+        jsr compare
+        beq ack
+        ldx #msg_duplicate - msgs
+        jmp fatal
++       inc FLAGS,x             ; new sector: into the cache
+        +set32 dma_src, RXBUF + F_PL + 14
+        jsr dma_copy512
+        dec b_left
+        jsr ack                 ; acknowledge first, then write what is in order
+        jmp flush
+
+ack:    ldx #6                  ; answer: counter, size - 1, slot, start (as received)
+-       lda RXBUF + F_ARG,x
+        sta TXBUF + F_ARG,x
+        dex
+        bpl -
+        lda #14
+        jmp reply
+
+; write the cached sectors that are next in order; when all are written, read them back
+flush:  ldx b_written
+        cpx b_max
+        beq +
+        lbcs .done
++       lda FLAGS,x
+        lbeq .wait               ; not received yet
+        jsr cache_addr
+        ldq dma_dst
+        stq dma_src
+        ldz #$00
+        jsr sd_wait
+        +set32 dma_dst, SDBUF
+        jsr dma_copy512
+        ldx b_written
+        lda #$05                ; multi-sector write: middle
+        cpx b_max
+        bne +
+        lda #$06                ; end
++       cpx #0
+        bne +
+        ldq b_start
+        stq tmp
+        ldz #$00
+        jsr sd_sector
+        lda #$04                ; start
++       jsr sd_write
+        inc b_written
+        bra flush
+.done:  lda #$00                ; complete: read back and compare
+        sta b_active
+        sta cmd                 ; slot
+        ldq b_start
+        stq tmp
+        ldz #$00
+.verify:
+        jsr sd_wait
+        jsr sd_read_tmp
+        ldx cmd
+        jsr cache_addr
+        ldq dma_dst
+        stq dma_src
+        ldz #$00
+        +set32 dma_dst, VBUF2
+        jsr dma_copy512
+        jsr sd_wait
+        +copy SDBUF, VBUF1, 512
+        jsr compare
+        beq +
+        ldx #msg_verify - msgs
+        jmp fatal
++       ldq tmp
+        inq
+        stq tmp
+        ldz #$00
+        lda cmd
+        cmp b_max
+        lbeq .wait
+        inc cmd
+        bra .verify
+.wait:  rts
+
+; carry set if the request's batch counter is older than the current one (late duplicate)
+outdated:
+        lda b_counter
+        sec
+        sbc RXBUF + F_ARG
+        beq +                   ; equal: not outdated
+        cmp #$80                ; (current - received) < $80: older
+        bcs +
+        sec
+        rts
++       clc
+        rts
+
+; dma_dst = CACHE + slot X * 512
+cache_addr:
+        txa
+        asl
+        sta dma_dst + 1
+        lda #$00
+        sta dma_dst
+        sta dma_dst + 3
+        lda #^CACHE
+        sta dma_dst + 2
+        rts
+
+; ---------------------------------------------------------------- SD card
+sd_wait:
+        lda $d680
+        and #$03
+        bne sd_wait
+        rts
+
+sd_sector:                      ; sector number tmp -> controller
+        ldq tmp
+        stq $d681
+        ldz #$00
+        rts
+
+sd_read_tmp:                    ; start reading sector tmp
+        jsr sd_sector
+        lda #$02
+        bra sd_cmd
+sd_read:                        ; start reading sector r_sector
+        jsr sd_wait
+        ldq r_sector
+        stq $d681
+        ldz #$00
+        lda #$02
+        bra sd_cmd
+sd_write:                       ; A = write command
+        ldy #$57                ; open the write gate first
+        sty $d680
+sd_cmd: sta $d680
+        ldy #$00                ; give the controller time to show busy
+-       dey
+        bne -
+        rts
+
+; Z set if VBUF1 and VBUF2 are equal
+compare:
+        ldx #0
+-       lda VBUF1,x
+        cmp VBUF2,x
+        bne +
+        lda VBUF1 + 256,x
+        cmp VBUF2 + 256,x
+        bne +
+        inx
+        bne -
++       rts
+
+; ---------------------------------------------------------------- neighbor discovery
+icmp:   lda RXBUF + F_UDP       ; ICMPv6 type 135: neighbor solicitation
+        cmp #135
+        bne +
+        ldx #15                 ; ... for our address
+-       lda RXBUF + F_PL,x
+        cmp ip_local,x
+        bne +
+        dex
+        bpl -
+        ldx #5                  ; advertisement to the solicitor
+-       lda RXBUF + F_ETHSRC,x
+        sta NDBUF,x
+        dex
+        bpl -
+        ldx #15
+-       lda RXBUF + F_IPSRC,x
+        sta NDBUF + F_IPDST,x
+        dex
+        bpl -
+        lda #$00
+        sta NDBUF + F_UDP + 2   ; ICMPv6 checksum
+        sta NDBUF + F_UDP + 3
+        lda #<(NDBUF + F_IPSRC)
+        sta cs_ptr
+        lda #>(NDBUF + F_IPSRC)
+        sta cs_ptr + 1
+        lda #16                 ; addresses + 32-byte message
+        sta cs_cnt
+        lda #32
+        sta tmp
+        lda #$00
+        sta tmp + 1
+        lda #58
+        jsr checksum
+        lda csum
+        eor #$ff
+        sta NDBUF + F_UDP + 2
+        lda csum + 1
+        eor #$ff
+        sta NDBUF + F_UDP + 3
+        +set32 dma_src, NDBUF
+        lda #86
+        ldx #0
+        jmp transmit
++       rts
+
+; ---------------------------------------------------------------- replies
+reply:  sta plen                ; A = payload length (< 256)
+        lda #$00
+        sta plen + 1
+reply_plen:                     ; sequence number and opcode as in the request
+        lda RXBUF + F_SEQ
+        sta TXBUF + F_SEQ
+        lda RXBUF + F_SEQ + 1
+        sta TXBUF + F_SEQ + 1
+        lda RXBUF + F_OP
+        sta TXBUF + F_OP
+send:   ; TXBUF payload complete, plen = its length
+        lda plen                ; UDP length = IPv6 payload length = 8 + plen
+        clc
+        adc #8
+        sta tmp
+        sta TXBUF + F_IPLEN + 1
+        sta TXBUF + F_UDP + 5
+        lda plen + 1
+        adc #$00
+        sta tmp + 1
+        sta TXBUF + F_IPLEN
+        sta TXBUF + F_UDP + 4
+        lda #$00
+        sta TXBUF + F_UDP + 6   ; checksum
+        sta TXBUF + F_UDP + 7
+        lda #<(TXBUF + F_PL)    ; zeros after the payload for the 32-bit sum
+        clc
+        adc plen
+        sta ptr
+        lda #>(TXBUF + F_PL)
+        adc plen + 1
+        sta ptr + 1
+        lda #$00
+        ldy #2
+-       sta (ptr),y
+        dey
+        bpl -
+        lda #<(TXBUF + F_IPSRC)
+        ldx #>(TXBUF + F_IPSRC)
+        jsr checksum_udp
+        lda csum
+        eor #$ff
+        sta TXBUF + F_UDP + 6
+        lda csum + 1
+        eor #$ff
+        sta TXBUF + F_UDP + 7
+        ora TXBUF + F_UDP + 6
+        bne +
+        lda #$ff                ; a checksum of 0 is sent as $FFFF
+        sta TXBUF + F_UDP + 6
+        sta TXBUF + F_UDP + 7
++       +set32 dma_src, TXBUF
+        lda plen                ; frame length = 62 + plen
+        clc
+        adc #F_PL
+        tay
+        lda plen + 1
+        adc #$00
+        tax
+        tya
+        ; fall through
+
+transmit:                       ; frame at dma_src, length A (low) / X (high)
+        sta dma_len
+        stx dma_len + 1
+        jsr wait_tx
+        +set32 dma_dst, ETHBUF
+        jsr dma_copy
+        lda dma_len
+        sta $d6e2
+        lda dma_len + 1
+        sta $d6e3
+        lda #$01
+        sta $d6e4               ; send
+        rts
+
+wait_tx:
+        lda $d6e0               ; bit 7: TX ready
+        bpl wait_tx
+        rts
+
+; ---------------------------------------------------------------- checksum
+; UDP checksum over the frame at A/X (the IPv6 source address): pseudo header (addresses,
+; length tmp, next header 17) and the UDP datagram of length tmp, zero padded to 4 bytes.
+checksum_udp:
+        sta cs_ptr
+        stx cs_ptr + 1
+        lda tmp                 ; dwords = (32 + length + 3) / 4
+        clc
+        adc #32 + 3
+        sta cs_cnt
+        lda tmp + 1
+        adc #$00
+        lsr
+        ror cs_cnt
+        lsr
+        ror cs_cnt
+        lda #17
+
+; One's complement sum of cs_cnt dwords at cs_ptr plus the pseudo header's length (tmp) and
+; next header (A). Result in csum (little-endian: store it as is into the packet).
+checksum:
+        clc
+        adc tmp                 ; pseudo header tail as one dword (memory order):
+        taz                     ;   0, 0, length high, length low + next header
+        lda #$00
+        adc #$00                ; carry out of byte 3 wraps around into byte 0
+        ldx #$00
+        ldy tmp + 1
+        clc
+-       adcq (cs_ptr)
+        inw cs_ptr
+        inw cs_ptr
+        inw cs_ptr
+        inw cs_ptr
+        dec cs_cnt
+        bne -
+        stq sum
+        ldz #$00
+        lda sum                 ; final carry
+        adc #$00
+        sta sum
+        lda sum + 1
+        adc #$00
+        sta sum + 1
+        lda sum + 2
+        adc #$00
+        sta sum + 2
+        lda sum + 3
+        adc #$00
+        sta sum + 3
+        bcc +
+        inc sum
++       clc                     ; fold 32 -> 16 bits
+        lda sum
+        adc sum + 2
+        sta csum
+        lda sum + 1
+        adc sum + 3
+        sta csum + 1
+        lda csum
+        adc #$00
+        sta csum
+        lda csum + 1
+        adc #$00
+        sta csum + 1
+        bcc +
+        inc csum
++       rts
+
+; ---------------------------------------------------------------- DMA
+dma_copy512:
+        lda #<512
+        ldx #>512
+        sta dma_len
+        stx dma_len + 1
+dma_copy:                       ; dma_len bytes from dma_src to dma_dst (28-bit addresses)
+        lda dma_src
+        sta dc_src
+        lda dma_src + 1
+        sta dc_src + 1
+        lda dma_src + 2
+        and #$0f
+        sta dc_srcbank
+        lda dma_src + 3
+        asl
+        asl
+        asl
+        asl
+        sta dc_srcmb
+        lda dma_src + 2
+        lsr
+        lsr
+        lsr
+        lsr
+        tsb dc_srcmb
+        lda dma_dst
+        sta dc_dst
+        lda dma_dst + 1
+        sta dc_dst + 1
+        lda dma_dst + 2
+        and #$0f
+        sta dc_dstbank
+        lda dma_dst + 3
+        asl
+        asl
+        asl
+        asl
+        sta dc_dstmb
+        lda dma_dst + 2
+        lsr
+        lsr
+        lsr
+        lsr
+        tsb dc_dstmb
+        lda dma_len
+        sta dc_len
+        lda dma_len + 1
+        sta dc_len + 1
+        sta $d707               ; in-line DMA job (this list is patched above)
+        !byte $0b, $80
+dc_srcmb:
+        !byte $00
+        !byte $81
+dc_dstmb:
+        !byte $00
+        !byte $00               ; end of options
+        !byte $00               ; copy
+dc_len: !word $0000
+dc_src: !word $0000
+dc_srcbank:
+        !byte $00
+dc_dst: !word $0000
+dc_dstbank:
+        !byte $00
+        !byte $00
+        !word $0000
+        rts
+
+; ---------------------------------------------------------------- screen and frames
+init_screen:
+        lda #$00
+        sta $d020
+        sta $d021
+        sta $d707               ; spaces on the screen, green text
+        !byte $0b, $81, $00, $00
+        !byte $07               ; fill, chained
+        !word 1000              ; count
+        !word $0020             ; fill value
+        !byte $00
+        !word SCREEN
+        !byte $00
+        !byte $00
+        !word $0000
+        !byte $81, (COLRAM >> 20) & $ff, $00
+        !byte $03               ; fill
+        !word 1000
+        !word $0005
+        !byte $00
+        !word COLRAM & $ffff
+        !byte (COLRAM >> 16) & $0f
+        !byte $00
+        !word $0000
+        ldx #0
+-       lda title,x
+        sta SCREEN + 41,x
+        inx
+        cpx #title_end - title
+        bne -
+        ldx #msg_waiting - msgs
+        ; fall through
+
+status:                         ; message X (offset in msgs) on line 3
+        ldy #0
+-       lda msgs,x
+        beq +
+        sta SCREEN + 121,y
+        inx
+        iny
+        bra -
++       lda #' '
+-       cpy #38
+        beq +
+        sta SCREEN + 121,y
+        iny
+        bra -
++       rts
+
+fatal:  jsr status              ; message X, then stop: the host notices the silence
+        lda #2
+        sta $d020
+-       bra -
+
+title:  !scr "m65fs transfer helper"
+title_end:
+msgs:
+msg_waiting:   !scr "waiting for the host", 0
+msg_connected: !scr "connected", 0
+msg_mixed:     !scr "error: read during a write batch", 0
+msg_conflict:  !scr "error: single write during a batch", 0
+msg_slot:      !scr "error: batch slot out of range", 0
+msg_duplicate: !scr "error: duplicate with other data", 0
+msg_verify:    !scr "error: sector verification failed", 0
+msg_nomac:     !scr "error: no mac address configured", 0
+
+; own address from the MAC; the constant parts of the reply and advertisement frames
+init_frames:
+        lda $d6e9
+        ora $d6ea
+        ora $d6eb
+        ora $d6ec
+        ora $d6ed
+        ora $d6ee
+        bne +
+        ldx #msg_nomac - msgs
+        jmp fatal
++       sta $d707               ; both frames start out all zero (ICMPv6 code, reserved bytes,
+        !byte $0b, $81, $00, $00        ; ... must be 0: RAM holds anything)
+        !byte $03               ; fill
+        !word NDBUF + 86 - TXBUF
+        !word $0000
+        !byte $00
+        !word TXBUF
+        !byte $00
+        !byte $00
+        !word $0000
+        ldx #5
+-       lda $d6e9,x
+        sta TXBUF + F_ETHSRC,x
+        sta NDBUF + F_ETHSRC,x
+        sta NDBUF + 80,x        ; target link-layer address option
+        dex
+        bpl -
+        lda $d6e9               ; fe80::(MAC with the universal bit flipped, ff:fe inserted)
+        eor #$02
+        sta ip_local + 8
+        lda $d6ea
+        sta ip_local + 9
+        lda $d6eb
+        sta ip_local + 10
+        lda $d6ec
+        sta ip_local + 13
+        lda $d6ed
+        sta ip_local + 14
+        lda $d6ee
+        sta ip_local + 15
+        ldx #15
+-       lda ip_local,x
+        sta TXBUF + F_IPSRC,x
+        sta NDBUF + F_IPSRC,x
+        sta NDBUF + F_PL,x      ; target address
+        dex
+        bpl -
+        ldx #7
+-       lda ip6_hdr,x           ; EtherType, version/class/flow (length set per frame)
+        sta TXBUF + F_TYPE,x
+        sta NDBUF + F_TYPE,x
+        dex
+        bpl -
+        lda #17                 ; UDP, hop limit 64
+        sta TXBUF + F_NH
+        lda #64
+        sta TXBUF + F_NH + 1
+        lda #>PORT
+        sta TXBUF + F_UDP
+        lda #<PORT
+        sta TXBUF + F_UDP + 1
+        ldx #3
+-       lda mrsp,x
+        sta TXBUF + F_PL,x
+        dex
+        bpl -
+        lda #32                 ; advertisement: length 32, ICMPv6, hop limit 255 (required)
+        sta NDBUF + F_IPLEN + 1
+        lda #58
+        sta NDBUF + F_NH
+        lda #255
+        sta NDBUF + F_NH + 1
+        lda #136                ; neighbor advertisement, code 0
+        sta NDBUF + F_UDP
+        lda #$60                ; solicited, override
+        sta NDBUF + F_UDP + 4
+        lda #2                  ; option: target link-layer address, 1 x 8 bytes
+        sta NDBUF + 78
+        lda #1
+        sta NDBUF + 79
+        rts
+
+ip6_hdr: !byte $86, $dd, $60, $00, $00, $00, $00, $00
+ip_local:
+        !byte $fe, $80, 0, 0, 0, 0, 0, 0, 0, 0, 0, $ff, $fe, 0, 0, 0
+
+helper_end:
+!if helper_end > RXLEN {
+        !error "helper code overlaps its buffers"
+}

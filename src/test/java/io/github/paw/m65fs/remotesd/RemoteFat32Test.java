@@ -18,7 +18,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** The full read path: Fat32Volume -> cache -> remote block device -> simulated remotesd_eth. */
+/** The full read path: Fat32Volume -> cache -> remote block device -> simulated transfer helper. */
 class RemoteFat32Test {
 
   @Test

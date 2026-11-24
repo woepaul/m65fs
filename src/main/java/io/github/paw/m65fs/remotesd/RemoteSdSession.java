@@ -18,7 +18,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 
 /**
- * A session with remotesd_eth: raw access to the MEGA65 SD card plus a few extras (memory peek,
+ * A session with the transfer helper (src/main/asm/helper/): raw access to the MEGA65 SD card plus a few extras (memory peek,
  * D81 mount). Thread-safe (all operations are serialized).
  *
  * <p>Protocol rules enforced here (violating them makes the helper stop with a fatal error):
@@ -45,7 +45,7 @@ public final class RemoteSdSession implements AutoCloseable {
    * @param timeout per-operation timeout ({@code ETHERNET_TIMEOUT} = 3 s in mega65_ftp)
    * @param writeWindow override for the write window size (default: 3 or 28 depending on the model)
    * @param quitOnClose send quit on {@link #close()}, which resets the MEGA65
-   * @param helperProgram the remotesd_eth program to bootstrap
+   * @param helperProgram the transfer helper program to bootstrap
    */
   public record Options(Duration timeout, OptionalInt writeWindow, boolean quitOnClose, byte[] helperProgram) {
     public Options {
@@ -99,7 +99,7 @@ public final class RemoteSdSession implements AutoCloseable {
     this.quitOnClose = quit;
   }
 
-  /** Bootstraps remotesd_eth on {@code target} and opens a session. */
+  /** Bootstraps the transfer helper on {@code target} and opens a session. */
   public static RemoteSdSession connect(Target target, Options options) throws IOException {
     UdpLink link = UdpLink.open(target);
     try {
@@ -126,7 +126,7 @@ public final class RemoteSdSession implements AutoCloseable {
     }
     session.writeWindow = options.writeWindow()
         .orElse(LARGE_RX_BUFFER_MODELS.contains(session.modelId) ? 28 : 3);
-    LOG.log(Level.DEBUG, "remotesd_eth session on {0}: model id ${1}, write window {2}",
+    LOG.log(Level.DEBUG, "helper session on {0}: model id ${1}, write window {2}",
         link.target(), Integer.toHexString(session.modelId), session.writeWindow);
     return session;
   }

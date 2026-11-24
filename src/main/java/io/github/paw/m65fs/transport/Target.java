@@ -17,7 +17,7 @@ import java.util.Optional;
  */
 public record Target(Inet6Address address, int port, NetworkInterface networkInterface) {
 
-  /** UDP port used by the MEGA65 Ethernet remote control and by remotesd_eth. */
+  /** UDP port used by the MEGA65 Ethernet remote control and by the transfer helper. */
   public static final int MEGA65_PORT = 4510;
 
   public Target {

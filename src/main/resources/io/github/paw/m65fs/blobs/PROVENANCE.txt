@@ -1,5 +1,0 @@
-mega65-tools: 9535fe6
-built: 2026-11-24T15:34:42Z
-cc65: cl65 V2.19 - N/A
-52464c0b9e7274037ac62a55ccca59cbe906bbc122d7c81d789feb0877600294  remotesd_eth.prg
-6e1286da1c50033b144ebc44dd1dda137e8411f6b58edc3285fb1ab387d24c39  c64boot.prg

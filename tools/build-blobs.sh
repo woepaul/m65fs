@@ -1,84 +1,31 @@
 #!/usr/bin/env bash
-# Builds the MEGA65-side binaries m65fs needs and copies them into
-# src/main/resources/io/github/paw/m65fs/blobs/.
+# Assembles the MEGA65 code m65fs sends to the machine into
+# src/main/resources/io/github/paw/m65fs/blobs/. Everything is m65fs' own 45GS02 assembly
+# (src/main/asm/), built with ACME 0.97 or newer:
 #
-#   ethlet_echo/load/start.bin  (ACME, our own src/main/asm/ethlets/, via tools/build-ethlets.sh)
-#   remotesd_eth.prg            (cc65 + mega65-libc, from mega65-tools)
-#   c64boot.prg                 (Ophis, our own src/main/asm/c64boot.a65)
+#   ethlet_echo/load/start.bin  src/main/asm/ethlets/   (docs/mega65-code.md)
+#   helper.prg                  src/main/asm/helper/    transfer helper
+#   c64boot.prg                 src/main/asm/c64boot.a  C64 disk boot loader
 #
-# Everything is built out-of-tree in a temp dir; the mega65-tools checkout is only read.
-#
-# Usage: tools/build-blobs.sh [path-to-mega65-tools]   (default: ~/Labs/mega65/mega65-tools)
-# Env:   CC65_PREFIX  prefix for cc65 tools, e.g. /opt/cc65/bin/
-#                     (default: build the cc65 submodule pinned by mega65-tools into target/cc65;
-#                      Fedora's cc65 2.19 segfaults on remotesd_eth.c)
+# The sources check their own field offsets and sizes; this script checks the ethlet sizes.
 set -euo pipefail
 
-M65TOOLS=$(realpath "${1:-$HOME/Labs/mega65/mega65-tools}")
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+ASM="$HERE/src/main/asm"
 OUT="$HERE/src/main/resources/io/github/paw/m65fs/blobs"
-OPHIS="$M65TOOLS/Ophis/bin/ophis"
-
-if [[ -z "${CC65_PREFIX:-}" ]]; then
-  CC65_DIR="$HERE/target/cc65"
-  if [[ ! -x "$CC65_DIR/bin/cl65" || ! -f "$CC65_DIR/lib/c64.lib" ]]; then
-    echo "== building pinned cc65 into $CC65_DIR"
-    rm -rf "$CC65_DIR"; mkdir -p "$HERE/target"
-    cp -r "$M65TOOLS/cc65" "$CC65_DIR"
-    make -C "$CC65_DIR" -j"$(nproc)" bin >/dev/null
-    make -C "$CC65_DIR" -j"$(nproc)" lib TARGETS=c64 >/dev/null
-  fi
-  CC65_PREFIX="$CC65_DIR/bin/"
-fi
-
-[[ -x "$OPHIS" ]] || { echo "Ophis not found at $OPHIS (git submodule update --init Ophis?)" >&2; exit 1; }
-command -v "${CC65_PREFIX}cl65" >/dev/null || { echo "cl65 not found" >&2; exit 1; }
-
-BUILD=$(mktemp -d)
-trap 'rm -rf "$BUILD"' EXIT
+command -v acme >/dev/null || { echo "acme (0.97 or newer) not found" >&2; exit 1; }
 mkdir -p "$OUT"
 
-echo "== ethlets"
-"$HERE/tools/build-ethlets.sh"
-
-echo "== c64boot.prg"
-"$OPHIS" --no-warn "$HERE/src/main/asm/c64boot.a65" -o "$BUILD/c64boot.prg"
-cp "$BUILD/c64boot.prg" "$OUT/"
-
-echo "== mega65-libc (cc65)"
-cp -r "$M65TOOLS/src/mega65-libc/cc65" "$BUILD/libc"
-CA65="${CC65_PREFIX}ca65 --cpu 4510"
-pushd "$BUILD/libc" >/dev/null
-objs=()
-for src in src/*.c src/*.s; do
-  obj="${src%.*}.o"
-  case "$src" in
-    *.c) "${CC65_PREFIX}cc65" -O -t c64 -I include/ "$src" -o "${src%.c}.s.gen"
-         $CA65 "${src%.c}.s.gen" -o "$obj" ;;
-    *.s) $CA65 "$src" -o "$obj" ;;
-  esac
-  objs+=("$obj")
+declare -A SIZE=([echo]=256 [load]=1280 [start]=1088)
+for e in echo load start; do
+  (cd "$ASM/ethlets" && acme --cpu m65 -f plain -o "$OUT/ethlet_$e.bin" "$e.a")
+  size=$(stat -c %s "$OUT/ethlet_$e.bin")
+  if [[ $size -ne ${SIZE[$e]} ]]; then
+    echo "ethlet_$e.bin is $size bytes, expected ${SIZE[$e]}" >&2
+    exit 1
+  fi
 done
-"${CC65_PREFIX}ar65" r libmega65.a "${objs[@]}"
-popd >/dev/null
+(cd "$ASM/helper" && acme --cpu m65 -f cbm -o "$OUT/helper.prg" helper.a)
+(cd "$ASM" && acme -f cbm -o "$OUT/c64boot.prg" c64boot.a)
 
-echo "== remotesd_eth.prg"
-U="$M65TOOLS/src/utilities"
-pushd "$BUILD" >/dev/null
-"${CC65_PREFIX}cl65" --config "$U/remotesd_eth_cl65.cfg" -I "$BUILD/libc/include" -O -g \
-  -o remotesd_eth.prg --mapfile remotesd_eth.map \
-  "$U/remotesd_eth_asm.s" "$U/checksum.s" "$U/ip_checksum_recv.s" "$U/remotesd_eth.c" \
-  "$BUILD/libc/libmega65.a"
-cp remotesd_eth.prg "$OUT/"
-popd >/dev/null
-
-# Record provenance
-{
-  echo "mega65-tools: $(git -C "$M65TOOLS" describe --always --dirty 2>/dev/null || echo unknown)"
-  echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "cc65: $("${CC65_PREFIX}cl65" --version 2>&1 | head -1)"
-  (cd "$OUT" && sha256sum remotesd_eth.prg c64boot.prg)
-} > "$OUT/PROVENANCE.txt"
-
-echo "== done"
 ls -l "$OUT"

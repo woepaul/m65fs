@@ -7,7 +7,7 @@
 ; bytes, then the frame), writes go to the frame to be sent (TX buffer, no length prefix).
 ; So an ethlet can never change its own bytes.
 ;
-; See docs/ethlets-spec.md for the protocol. Assemble with ACME 0.97: acme --cpu m65.
+; See docs/mega65-code.md for the protocol. Assemble with ACME 0.97: acme --cpu m65.
 
 !cpu m65
 

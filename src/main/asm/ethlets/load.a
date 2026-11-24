@@ -40,7 +40,7 @@ dest_bank:
         rts
 
 !if dest_mb - payload != $0e or count - payload != $11 or dest - payload != $16 or dest_bank - payload != $18 {
-        !error "LOAD fields moved; update Ethlet.java and docs/ethlets-spec.md"
+        !error "LOAD fields moved; update Ethlet.java and docs/mega65-code.md"
 }
 
 +at $fe

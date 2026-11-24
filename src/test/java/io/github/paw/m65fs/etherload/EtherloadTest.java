@@ -49,10 +49,12 @@ class EtherloadTest {
       el.ping(Etherload.DEFAULT_TIMEOUT);
       el.startHelper(prg);
 
+      int load = WindowProtocol.le16(prg, 0);
       assertArrayEquals(Arrays.copyOfRange(prg, 2, prg.length),
-          Arrays.copyOfRange(hv.memory, 0x0801, 0x0801 + prg.length - 2));
-      assertTrue(hv.basicRun);
-      assertEquals(0x0801 + prg.length - 2, hv.basicEnd, "the real end of the helper");
+          Arrays.copyOfRange(hv.memory, load, load + prg.length - 2));
+      var jump = hv.starts(Ethlet.START_MODE_JUMP).getLast();
+      assertEquals(load, jump.address(), "started at its load address, without a reset");
+      assertEquals("", jump.imageName());
     }
   }
 

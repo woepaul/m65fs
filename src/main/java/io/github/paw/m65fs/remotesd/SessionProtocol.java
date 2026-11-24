@@ -4,7 +4,7 @@ import io.github.paw.m65fs.transport.WindowProtocol;
 import java.nio.ByteBuffer;
 
 /**
- * Window protocol for the remotesd_eth session ({@code ethernet_*} callbacks in mega65_ftp.c).
+ * Window protocol for the transfer helper session ({@code ethernet_*} callbacks in mega65_ftp.c).
  * In addition to the C matching rules, the response opcode must equal the request opcode.
  */
 final class SessionProtocol implements WindowProtocol {

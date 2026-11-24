@@ -63,7 +63,7 @@ public final class UdpLink implements AutoCloseable {
     return target;
   }
 
-  /** Local port of the socket; the remotesd_eth session is bound to it after hello. */
+  /** Local port of the socket; the helper session is bound to it after hello. */
   public int localPort() throws IOException {
     return ((InetSocketAddress) channel.getLocalAddress()).getPort();
   }

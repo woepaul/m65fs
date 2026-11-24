@@ -3,8 +3,8 @@
 Tools and a Java library for working with a [MEGA65](https://mega65.org) over Ethernet:
 manage the files on its SD card and start software on it from your computer. You don't need
 a card reader, and nothing has to be installed on the MEGA65. m65fs uses the hypervisor's
-Ethernet remote control (`ETHLOAD.M65`) with its own small 45GS02 programs, and the transfer
-helper of mega65-tools' `mega65_ftp -e`.
+Ethernet remote control (`ETHLOAD.M65`) with its own small 45GS02 programs; the protocols are
+those of mega65-tools' `mega65_ftp -e` and `etherload`, reduced to what m65fs needs.
 
 - **Command line tools in the style of the Unix core utilities:** `m65.ls`, `m65.tree`,
   `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`. They copy
@@ -50,8 +50,8 @@ works on SD card image files. Everything has been tested on real hardware.
 For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
 
 1. **Bootstrap.** A trigger packet puts the MEGA65 hypervisor into Ethernet remote control.
-   Small 45GS02 programs ("ethlets", m65fs' own) then upload the helper `remotesd_eth.prg` and
-   `RUN` it.
+   Small 45GS02 programs ("ethlets") then upload the transfer helper `helper.prg` (2.7 KB)
+   and start it.
 2. **Session.** The helper serves raw SD card sectors over UDP (IPv6 link-local, port 4510).
    The library sends requests through a sliding window with retransmission.
 3. **FAT32 on the PC.** All file system logic runs in Java: MBR, FAT32, VFAT long names and
@@ -302,7 +302,7 @@ try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://
   else in C64 mode (as with `GO64`). `closeAndBoot(image, MachineMode.C64)` forces a mode. The
   method returns what it started, e.g. `boot GAME.D81: "GAME" ($0801) in C64 mode`.
   * **C64 mode:** the reset mounts the image. A 113-byte loader
-    (`src/main/asm/c64boot.a65`) then does `LOAD"name",8,1` and types `RUN`, exactly as a
+    (`src/main/asm/c64boot.a`) then does `LOAD"name",8,1` and types `RUN`, exactly as a
     user would. Programs that start themselves during the load (autostart tricks) work too.
   * **MEGA65 mode:** the reset happens without a disk, and a one-line BASIC 65 program does
     `MOUNT"image":RUN"name"`. If a disk is attached during the reset, the ROM doesn't start the
@@ -398,18 +398,14 @@ afterwards.
 
 `src/main/resources/io/github/paw/m65fs/blobs/` holds:
 
-* the three ethlets `ethlet_echo.bin`, `ethlet_load.bin` and `ethlet_start.bin`: m65fs' own,
-  described in `docs/ethlets-spec.md`, sources in `src/main/asm/ethlets/`,
-  built with ACME (`--cpu m65`) by `tools/build-ethlets.sh`;
-* our own `c64boot.prg` (built from `src/main/asm/c64boot.a65` with Ophis);
-* `remotesd_eth.prg`, the transfer helper from
-  [mega65-tools](https://github.com/MEGA65/mega65-tools) (GPL-3), built from the
-  `remotesd-cwd` branch, which adds the working directory request (opcode `$13`) and returns
-  to the saved working directory at startup. `PROVENANCE.txt` lists the commit and checksums.
+* the three ethlets `ethlet_echo.bin`, `ethlet_load.bin` and `ethlet_start.bin`
+  (`src/main/asm/ethlets/`);
+* the transfer helper `helper.prg` (`src/main/asm/helper/`);
+* the C64 disk boot loader `c64boot.prg` (`src/main/asm/c64boot.a`).
 
-Rebuild everything with `tools/build-blobs.sh`, which needs ACME, a mega65-tools checkout,
-Ophis and git. It builds its own cc65, because some distribution builds crash on the helper.
+All of it is m65fs' own 45GS02 assembly, described in `docs/mega65-code.md`. Rebuild it with
+`tools/build-blobs.sh`, which needs only ACME 0.97 or newer.
 
 ## License
 
-GPL-3.0, see `LICENSE`. That matches mega65-tools, whose binaries are bundled.
+GPL-3.0, see `LICENSE`.
