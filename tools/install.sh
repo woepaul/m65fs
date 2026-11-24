@@ -5,7 +5,6 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-COMMANDS=(ls tree cd pwd cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
 JVM=0
 if [[ "${1:-}" == "--jvm" ]]; then
   JVM=1
@@ -20,6 +19,8 @@ else
   "$HERE/tools/build-native.sh"
   install -m 755 "$HERE/target/native/m65" "$DIR/m65"
 fi
+mapfile -t COMMANDS < <("$DIR/m65" --list-commands)
+[[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$DIR/m65 --list-commands gave no commands" >&2; exit 1; }
 for c in "${COMMANDS[@]}"; do
   ln -sf m65 "$DIR/m65.$c"
 done

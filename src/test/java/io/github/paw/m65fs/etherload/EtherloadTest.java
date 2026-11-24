@@ -28,21 +28,16 @@ class EtherloadTest {
   }
 
   @Test
-  void dmaPacketLayoutMatchesSendMem() throws Exception {
-    try (var hv = new FakeHypervisor(0, 0, 1); var link = UdpLink.open(hv.target())) {
-      var el = Etherload.on(link);
-      byte[] data = {1, 2, 3};
-      byte[] p = el.dmaPacket(0x0123_4567, data, 0, 3);
-      var d = EthletProtocols.DmaLoad.INSTANCE;
-      assertEquals(1280, p.length);
-      assertEquals(0x67, p[d.destAddress] & 0xff);
-      assertEquals(0x45, p[d.destAddress + 1] & 0xff);
-      assertEquals(0x03, p[d.destBank] & 0xff);
-      assertEquals(0x12, p[d.destMb] & 0xff);
-      assertEquals(3, WindowProtocol.le16(p, d.byteCount));
-      assertEquals(0x0123_4567, d.loadAddress(p));
-      assertArrayEquals(data, Arrays.copyOfRange(p, d.data, d.data + 3));
-    }
+  void loadPacketLayout() {
+    byte[] data = {1, 2, 3};
+    byte[] p = Etherload.dmaPacket(0x0123_4567, data, 0, 3);
+    assertEquals(1280, p.length);
+    assertEquals(0x12, p[0x0e] & 0xff, "destination MB");
+    assertEquals(3, WindowProtocol.le16(p, 0x11));
+    assertEquals(0x4567, WindowProtocol.le16(p, 0x16));
+    assertEquals(0x03, p[0x18] & 0xff, "destination bank");
+    assertEquals(0x0123_4567, EthletProtocols.Load.loadAddress(p));
+    assertArrayEquals(data, Arrays.copyOfRange(p, 0x100, 0x103));
   }
 
   @Test
@@ -52,14 +47,12 @@ class EtherloadTest {
       byte[] prg = Etherload.bundledHelper();
       // bootstrap() would multicast the trigger, which needs an interface; do the rest by hand
       el.ping(Etherload.DEFAULT_TIMEOUT);
-      el.writeMemory(0x0801, prg, 2, prg.length - 2, Etherload.DEFAULT_TIMEOUT);
-      el.awaitAll(Etherload.DEFAULT_TIMEOUT);
-      el.allDoneBasic2(0x0801, true, false, Etherload.DEFAULT_TIMEOUT);
+      el.startHelper(prg);
 
       assertArrayEquals(Arrays.copyOfRange(prg, 2, prg.length),
           Arrays.copyOfRange(hv.memory, 0x0801, 0x0801 + prg.length - 2));
       assertTrue(hv.basicRun);
-      assertEquals(0x0801, hv.basicEnd);
+      assertEquals(0x0801 + prg.length - 2, hv.basicEnd, "the real end of the helper");
     }
   }
 

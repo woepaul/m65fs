@@ -18,8 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Emulates the hypervisor's ethlet execution on {@code [::1]}: echo ethlets are echoed, DMA
- * load ethlets copy their data into {@link #memory} (first 2 MiB only) and are echoed. Incoming
+ * Emulates ETHLOAD's ethlet execution on {@code [::1]}: every ethlet is echoed, LOAD ethlets
+ * also copy their data into {@link #memory} (first 2 MiB only). Incoming
  * and outgoing packets are dropped with probability {@code loss}; answers are duplicated with
  * probability {@code dup}.
  */
@@ -30,13 +30,12 @@ public final class FakeHypervisor implements AutoCloseable {
   public final List<Command> commands = Collections.synchronizedList(new ArrayList<>());
   public final AtomicInteger triggers = new AtomicInteger();
 
-  /** A received 1024-byte ethlet. */
+  /** A received ECHO or START ethlet. */
   public record Command(Ethlet kind, byte[] packet) {
-    /** The NUL-terminated disk image name at {@code label}, case-swapped back to ASCII. */
+    /** The NUL-terminated disk image name, case-swapped back to ASCII ("" = none). */
     public String imageName() {
-      int off = kind.offset("d81filename");
       StringBuilder sb = new StringBuilder();
-      for (int i = off; packet[i] != 0; i++) {
+      for (int i = Ethlet.START_IMAGE; packet[i] != 0; i++) {
         int c = packet[i] & 0xff;
         int u = c & 0xdf;
         sb.append((char) (u >= 'A' && u <= 'Z' ? c ^ 0x20 : c));
@@ -44,36 +43,22 @@ public final class FakeHypervisor implements AutoCloseable {
       return sb.toString();
     }
 
-    public int u8(String label, int delta) {
-      return packet[kind.offset(label) + delta] & 0xff;
+    public int mode() {
+      return packet[Ethlet.START_MODE] & 0xff;
     }
 
-    public int le16(String label, int delta) {
-      return WindowProtocol.le16(packet, kind.offset(label) + delta);
+    public boolean run() {
+      return (packet[Ethlet.START_FLAGS] & Ethlet.START_FLAG_RUN) != 0;
     }
-  }
 
-  private static final List<Ethlet> COMMAND_ETHLETS =
-      List.of(Ethlet.ECHO, Ethlet.ALL_DONE_BASIC2, Ethlet.ALL_DONE_BASIC65, Ethlet.ALL_DONE_JUMP);
-
-  /** The ethlet a 1024-byte packet was made from (most bytes in common with its image). */
-  static Ethlet identify(byte[] p) {
-    Ethlet best = null;
-    int bestScore = -1;
-    for (Ethlet e : COMMAND_ETHLETS) {
-      byte[] img = e.newPacket();
-      int score = 0;
-      for (int i = 0; i < img.length; i++) {
-        if (img[i] == p[i]) {
-          score++;
-        }
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        best = e;
-      }
+    public int video() {
+      return packet[Ethlet.START_VIDEO] & 0xff;
     }
-    return best;
+
+    /** End address of the program, or the jump address. */
+    public int address() {
+      return WindowProtocol.le16(packet, Ethlet.START_ADDRESS);
+    }
   }
 
   public List<Command> commands(Ethlet kind) {
@@ -81,6 +66,12 @@ public final class FakeHypervisor implements AutoCloseable {
       return commands.stream().filter(c -> c.kind() == kind).toList();
     }
   }
+
+  /** START commands with the given mode. */
+  public List<Command> starts(int mode) {
+    return commands(Ethlet.START).stream().filter(c -> c.mode() == mode).toList();
+  }
+
   final AtomicInteger dmaPackets = new AtomicInteger();
   final AtomicInteger dropped = new AtomicInteger();
   volatile boolean basicRun;
@@ -109,9 +100,6 @@ public final class FakeHypervisor implements AutoCloseable {
 
   private void run() {
     ByteBuffer buf = ByteBuffer.allocate(2048);
-    var dma = EthletProtocols.DmaLoad.INSTANCE;
-    int doRun = Ethlet.ALL_DONE_BASIC2.offset("do_run");
-    int endAddr = Ethlet.ALL_DONE_BASIC2.offset("data_end_address");
     while (running.get()) {
       try {
         buf.clear();
@@ -123,17 +111,17 @@ public final class FakeHypervisor implements AutoCloseable {
           dropped.incrementAndGet();
           continue;
         }
-        if (p.length == 1280) {
-          int addr = dma.loadAddress(p);
-          int n = WindowProtocol.le16(p, dma.byteCount);
-          System.arraycopy(p, dma.data, memory, addr, n);
+        Ethlet kind = Ethlet.of(p);
+        if (kind == Ethlet.LOAD) {
+          int addr = EthletProtocols.Load.loadAddress(p);
+          int n = WindowProtocol.le16(p, Ethlet.LOAD_COUNT);
+          System.arraycopy(p, Ethlet.LOAD_DATA, memory, addr, n);
           dmaPackets.incrementAndGet();
-        } else if (p.length == 1024) {
-          Ethlet kind = identify(p);
+        } else if (kind != null) {
           commands.add(new Command(kind, p));
-          if (kind == Ethlet.ALL_DONE_BASIC2) {
-            basicEnd = WindowProtocol.le16(p, endAddr);
-            basicRun = p[doRun] != 0;
+          if (kind == Ethlet.START && p[Ethlet.START_MODE] == Ethlet.START_MODE_C64) {
+            basicEnd = WindowProtocol.le16(p, Ethlet.START_ADDRESS);
+            basicRun = (p[Ethlet.START_FLAGS] & Ethlet.START_FLAG_RUN) != 0;
           }
         } else {
           if (p.length == 128) {

@@ -95,8 +95,8 @@ Files written to the card are always contiguous. If an overwrite doesn't fit con
   `m65.reset` (or boot or run something) so the user gets the machine back.
 - Because of this, `m65.peek` shows memory *after* the helper started (screen and I/O have
   changed). It can't inspect a program that was running before.
-- `m65.boot`, `m65.run` and `m65.reset` leave the MEGA65 in the root directory; the file tools
-  and `m65.mount` keep the working directory.
+- All tools keep the MEGA65's working directory, including `m65.boot`, `m65.run` and
+  `m65.reset` (BASIC starts in it).
 - Disk images used with `m65.boot` or `m65.mount` must be in the **root directory**,
   contiguous, with a printable ASCII name of at most 63 characters. `m65.boot` with a local
   file takes care of that.

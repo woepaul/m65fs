@@ -220,6 +220,18 @@ class M65fsCliTest {
   }
 
   @Test
+  void everyCommandHasALinkInBin() throws IOException {
+    assertEquals(0, M65fs.run(new String[] {"--list-commands"}, Map.of(), new PrintStream(out), new PrintStream(err)));
+    assertEquals(M65fs.COMMANDS, out().lines().toList());
+    List<String> links;
+    try (Stream<Path> s = Files.list(Path.of("bin"))) {
+      links = s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("m65."))
+          .map(n -> n.substring(4)).sorted().toList();
+    }
+    assertEquals(M65fs.COMMANDS.stream().sorted().toList(), links, "bin/m65.COMMAND links");
+  }
+
+  @Test
   void commandFromProgramName() {
     assertArrayEquals(new String[] {"ls", "-l"}, M65fs.withInvokedCommand("/usr/local/bin/m65.ls", new String[] {"-l"}));
     assertArrayEquals(new String[] {"ls"}, M65fs.withInvokedCommand("m65", new String[] {"ls"}));

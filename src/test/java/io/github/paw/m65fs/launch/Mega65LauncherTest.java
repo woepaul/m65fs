@@ -2,6 +2,7 @@ package io.github.paw.m65fs.launch;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -38,14 +39,12 @@ class Mega65LauncherTest {
       assertEquals(MachineMode.C64, mode);
       assertTrue(hv.triggers.get() >= 1);
       assertArrayEquals(Arrays.copyOfRange(p, 2, p.length), memory(hv, 0x0801, 5000));
-      var reset = hv.commands(Ethlet.ALL_DONE_BASIC2).getLast();
-      assertEquals(0x0801 + 5000, reset.le16("data_end_address", 0));
-      assertEquals(1, reset.u8("do_run", 0));
-      assertEquals(1, reset.u8("restore_prg", 0));
-      assertEquals(0x01, reset.u8("set_video_mode", 0));
+      var reset = hv.starts(Ethlet.START_MODE_C64).getLast();
+      assertEquals(0x0801 + 5000, reset.address());
+      assertTrue(reset.run());
+      assertEquals(1, reset.video(), "PAL");
       assertEquals("Data Disk.d81", reset.imageName());
-      assertEquals((byte) 'd', reset.packet()[Ethlet.ALL_DONE_BASIC2.offset("d81filename")],
-          "letters are sent with swapped case, as etherload.c does");
+      assertEquals((byte) 'd', reset.packet()[Ethlet.START_IMAGE], "PETSCII: letters with swapped case");
     }
   }
 
@@ -56,12 +55,11 @@ class Mega65LauncherTest {
       assertEquals(MachineMode.MEGA65, Mega65Launcher.runPrg(hv.target(), p,
           Mega65Launcher.Options.defaults().withRun(false)));
       assertArrayEquals(Arrays.copyOfRange(p, 2, p.length), memory(hv, 0x2001, 40_000));
-      var reset = hv.commands(Ethlet.ALL_DONE_BASIC65).getLast();
-      assertEquals(0x2001 + 40_000, reset.le16("autostart", 0));
-      assertEquals(0, reset.u8("autostart", 2), "do_run");
-      assertEquals(1, reset.u8("restore_prg", 0));
+      var reset = hv.starts(Ethlet.START_MODE_MEGA65).getLast();
+      assertEquals(0x2001 + 40_000, reset.address());
+      assertFalse(reset.run());
       assertEquals("", reset.imageName());
-      assertTrue(hv.commands(Ethlet.ALL_DONE_BASIC2).isEmpty());
+      assertTrue(hv.starts(Ethlet.START_MODE_C64).isEmpty());
     }
   }
 
@@ -77,11 +75,11 @@ class Mega65LauncherTest {
       assertNull(Mega65Launcher.runPrg(hv.target(), p,
           Mega65Launcher.Options.defaults().withJump(0xc000).withMount("TOOLS.D81")));
       assertArrayEquals(Arrays.copyOfRange(p, 2, p.length), memory(hv, 0xc000, 100));
-      var jump = hv.commands(Ethlet.ALL_DONE_JUMP).getLast();
-      assertEquals(0xc000, jump.le16("jump_addr", 1));
+      var jump = hv.starts(Ethlet.START_MODE_JUMP).getLast();
+      assertEquals(0xc000, jump.address());
       assertEquals("TOOLS.D81", jump.imageName());
       assertThrows(IllegalArgumentException.class,
-          () -> Mega65Launcher.Options.defaults().withJump(0xc000).withMount("a name that is too long.d81"));
+          () -> Mega65Launcher.Options.defaults().withJump(0xc000).withMount("x".repeat(64) + ".d81"));
       assertThrows(IllegalArgumentException.class, () -> Mega65Launcher.runPrg(hv.target(), prg(0xff00, 0x200),
           Mega65Launcher.Options.defaults()), "beyond $FFFF");
     }
@@ -94,20 +92,20 @@ class Mega65LauncherTest {
       Mega65Launcher.boot(hv.target(), c64, Video.UNCHANGED);
       byte[] loader = BootLoaders.c64(Petscii.fromAscii("GAME"));
       assertArrayEquals(Arrays.copyOfRange(loader, 2, loader.length), memory(hv, 0x0801, loader.length - 2));
-      var reset = hv.commands(Ethlet.ALL_DONE_BASIC2).getLast();
+      var reset = hv.starts(Ethlet.START_MODE_C64).getLast();
       assertEquals("Game Disk.D81", reset.imageName());
-      assertEquals(0x0801 + loader.length - 2, reset.le16("data_end_address", 0));
-      assertEquals(1, reset.u8("do_run", 0));
+      assertEquals(0x0801 + loader.length - 2, reset.address());
+      assertTrue(reset.run());
 
       var m65 = new Mega65Launcher.Boot("DEMO.D81", MachineMode.MEGA65, Petscii.fromAscii("DEMO"), 0x2001);
       Mega65Launcher.boot(hv.target(), m65, Video.NTSC);
       byte[] basic = BootLoaders.mega65(Petscii.fromAscii("DEMO"), "DEMO.D81");
       assertArrayEquals(Arrays.copyOfRange(basic, 2, basic.length), memory(hv, 0x2001, basic.length - 2));
-      var reset65 = hv.commands(Ethlet.ALL_DONE_BASIC65).getLast();
+      var reset65 = hv.starts(Ethlet.START_MODE_MEGA65).getLast();
       assertEquals("", reset65.imageName(), "MEGA65 mode: the BASIC loader mounts, not the reset");
-      assertEquals(0x2001 + basic.length - 2, reset65.le16("autostart", 0));
-      assertEquals(1, reset65.u8("autostart", 2));
-      assertEquals(0xff, reset65.u8("set_video_mode", 0));
+      assertEquals(0x2001 + basic.length - 2, reset65.address());
+      assertTrue(reset65.run());
+      assertEquals(2, reset65.video(), "NTSC");
     }
   }
 
@@ -115,9 +113,9 @@ class Mega65LauncherTest {
   void plainResetKeepsNoProgram() throws Exception {
     try (var hv = new FakeHypervisor(0, 0, 1)) {
       Mega65Launcher.reset(hv.target(), MachineMode.MEGA65, null, Video.UNCHANGED);
-      var reset = hv.commands(Ethlet.ALL_DONE_BASIC65).getLast();
-      assertEquals(0, reset.le16("autostart", 0));
-      assertEquals(0, reset.u8("restore_prg", 0));
+      var reset = hv.starts(Ethlet.START_MODE_MEGA65).getLast();
+      assertEquals(0, reset.address());
+      assertFalse(reset.run());
       assertEquals("", reset.imageName());
     }
   }

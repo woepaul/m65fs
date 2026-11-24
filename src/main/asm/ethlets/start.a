@@ -1,0 +1,353 @@
+; start.a -- START ethlet (part of m65fs, GPL-3). 1088 bytes. Answers first, then
+;   1. mode 0 (MEGA65): detaches all disk images,
+;   2. attaches the named D81 as drive 0 (looked up in the root directory),
+;   3. returns to the working directory the trigger saved (patched hypervisors),
+;   4. resets into MEGA65 mode (0) or C64 mode (1), keeping a BASIC program the host LOADed
+;      at $2001 / $0801, setting BASIC's end-of-program pointer and optionally RUNning it;
+;      or jumps to an address (2).
+;
+; Fields (host):
+;   $3C0  disk image name, NUL-terminated, max. 63 characters (first byte 0 = none)
+;   $400  mode: 0 = MEGA65, 1 = C64, 2 = jump
+;   $401  flags: bit 0 = RUN
+;   $402  video: 0 = unchanged, 1 = PAL, 2 = NTSC
+;   $404  end address of the program (LE16, 0 = none), or the jump address
+;   $43E  sequence number (LE16)
+;
+; Getting control back after the ROM's reset:
+; * C64 mode: a CBM80 cartridge signature in RAM at $8000 makes the C64 KERNAL's reset jump
+;   to our code (copied to $0334) right after the stack setup. It gives $8000-$8008 back,
+;   then does the KERNAL and BASIC cold start itself, except the RAM test, which would
+;   clear page 3 and write into RAM at $A000. BASIC's NEW clears the first line link of the
+;   program, so the code saves those bytes first. Nothing in the ROM is changed.
+; * MEGA65 mode: BASIC 65 starts its interrupt handler with a JMP at $32006 in the ROM
+;   (mapped at $2006). Its target is pointed at our code, which lives in a free page of the
+;   ROM ($2C700, mapped at $C700 while BASIC 65 runs). The first interrupt after the reset
+;   restores the program's first bytes, the cartridge byte and the ROM vector, sets the end
+;   pointer, types RUN and continues with BASIC's handler. The ROM is write protected again
+;   afterwards and unchanged.
+;
+; Machine state at the reset: MAP cleared, CPU port $00/$01 = $3F, CPU speed C64 ($00 =
+; $40), C64 I/O personality, SP = $01FF with 8-bit stack, interrupts disabled. Jump mode
+; hands over in that same state (no ROM initialisation).
+
+!source "common.a"
+
+SIZE  = $440
+NAME  = $3c0
+MODE  = $400
+FLAGS = $401
+VIDEO = $402
+ADDR  = $404
+PARAMS = FLAGS                  ; flags, video, pad, address: copied to the code below
+PARAMS_LEN = 5
+
+NAME_RAM = $0100                ; copy of the name for setname (page aligned, low RAM)
+TRAMP_AT = $0334                ; page 3 RAM: trampoline (+ C64 cold start code)
+HOOK_AT  = $c700                ; MEGA65 interrupt hook, at $2C700 in the ROM
+BASIC65_IRQ_JMP = $32006        ; JMP <handler> at the start of BASIC 65's IRQ handler
+
+; DMA job: ends the option list in front of it ($00), then the F018B job. Physical
+; addresses as (bank byte, 16 bits); the MB comes from the options ($80/$81, which persist).
+!macro job .cmd, .count, .src, .srcbank, .dst, .dstbank {
+        !byte $00
+        !byte .cmd
+        !word .count
+        !word .src
+        !byte .srcbank
+        !word .dst
+        !byte .dstbank
+        !byte $00
+        !word $0000
+}
+COPY  = $04                     ; copy, chained
+FILL  = $07                     ; fill, chained (fill value = low byte of the source)
+LAST  = $00                     ; copy, end of chain
+; Where a byte of this payload is for DMA: offset in the RX buffer
+!macro rx .label {
+        !word RX + FRAME_HEADERS + (.label - payload)
+}
+rxa = RX + FRAME_HEADERS - payload   ; add to a payload label
+
+* = payload
+        +wait_tx                ; LDA #$10 first, as ETHLOAD requires
+        sta $d707               ; in-line DMA: the reply
+        !byte $0b, $80, $ff, $81, $ff
+        +reply_jobs SIZE
+        +send SIZE
+        ldx #$00                ; let the reply leave before the machine is taken over (a
+        ldy #$00                ; reset would cut it off): ~5 ms
+-       dex
+        bne -
+        dey
+        bne -
+
+        lda payload + MODE
+        bne +
+        +hyppo $42              ; MEGA65 mode: detach all disk images
++       lda payload + NAME
+        beq +
+        sta $d707               ; the name to RAM ($0100: the unused bottom of the stack
+        !byte $0b, $80, $ff, $81, $00   ; page); setname reads RAM, not the Ethernet buffer
+        +job LAST, $40, payload + NAME + rxa, ETH_BANK, NAME_RAM, $00
+        ldy #>NAME_RAM          ; setname: name at the start of this page
+        +hyppo $2e
+        bcc +
+        +hyppo $40              ; attach as drive 0
++       +hyppo $4c              ; back to the saved working directory (older hypervisors
+                                ; just fail)
+
+        lda payload + MODE
+        cmp #2
+        bne reset
+        ; jump: only the trampoline, with JMP <address> at its end
+        sta $d707
+        !byte $0b, $80, $ff, $81, $00
+        +job LAST, tramp_len, tramp_image + rxa, ETH_BANK, TRAMP_AT, $00
+        lda #$4c                ; JMP abs
+        sta tramp_jmp
+        lda payload + ADDR
+        ldx payload + ADDR + 1
+        sta tramp_jmp + 1
+        stx tramp_jmp + 2
+        jmp TRAMP_AT
+
+reset:  ; things the ROMs do not reset, which a program may have changed
+        lda #$ff
+        sta $d070               ; palette bank selections
+        lda #$00
+        sta $d076               ; SPRENV400
+        lda #$20
+        trb $d07a               ; NOBUGCOMPAT
+        lda #$80                ; $D06F bit 7: NTSC
+        ldx payload + VIDEO
+        beq ++
+        dex
+        bne +
+        trb $d06f               ; PAL
+        bra ++
++       tsb $d06f               ; NTSC
+++
+        lda payload + MODE
+        lbne c64                ; 16-bit branch (45GS02)
+
+; ---------------------------------------------------------------- MEGA65 mode
+        lda #$02
+        sta $d641               ; ROM ($20000-$3FFFF) writable
+        clv
+        ; Save BASIC's interrupt handler address, unless the ROM still points at our hook
+        ; (an earlier attempt whose hook never ran): then the saved one is still valid.
+        lda #<(BASIC65_IRQ_JMP + 1)
+        ldx #>(BASIC65_IRQ_JMP + 1)
+        ldy #^(BASIC65_IRQ_JMP + 1)
+        ldz #$00
+        stq $fc                 ; 32-bit pointer for [$fc],z (zero page is ours until the reset)
+        lda [$fc],z
+        cmp #<hook
+        bne +
+        inz
+        lda [$fc],z
+        cmp #>hook
+        beq ++
++       sta $d707
+        !byte $0b, $80, $00, $81, $00
+        +job LAST, 4, (BASIC65_IRQ_JMP + 1) & $ffff, $03, h_irq_save, $02
+++      sta $d707
+        !byte $0b, $80, $ff, $81, $00
+        +job COPY, hook_end - hook_image, hook_image + rxa, ETH_BANK, HOOK_AT, $02
+        +job COPY, tramp_len, tramp_image + rxa, ETH_BANK, TRAMP_AT, $00
+        +job COPY, PARAMS_LEN, payload + PARAMS + rxa, ETH_BANK, h_params, $02
+        !byte $80, $00
+        +job COPY, 4, $2001, $00, h_prg_save, $02
+        +job COPY, 1, $8004, $00, h_cart_save, $02
+        +job FILL, 1, $0000, $00, $8004, $00  ; no cartridge signature during the reset
+        !byte $80, $ff
+        +job LAST, 2, hook_vector + rxa, ETH_BANK, (BASIC65_IRQ_JMP + 1) & $ffff, $03
+        lda #$00
+        sta $d641               ; ROM write protected again
+        clv
+        lda #$20
+        tsb $d030               ; ROM at $C000-$CFFF ($2C000): where BASIC 65 finds the hook
+        jmp TRAMP_AT
+
+; ---------------------------------------------------------------- C64 mode
+c64:    sta $d707
+        !byte $0b, $80, $ff, $81, $00
+        +job COPY, c64_end - tramp_image, tramp_image + rxa, ETH_BANK, TRAMP_AT, $00
+        +job COPY, PARAMS_LEN, payload + PARAMS + rxa, ETH_BANK, c_params, $00
+        !byte $80, $00
+        +job COPY, 9, $8000, $00, c_cart_save, $00
+        !byte $80, $ff
+        +job LAST, 9, signature + rxa, ETH_BANK, $8000, $00
+        lda #$f6                ; reset through ($FFF6): the C64 mode reset of the ROM
+        sta tramp_jmp + 1
+        jmp TRAMP_AT
+
+signature:                      ; CBM80: cold and warm start vectors, then "CBM80"
+        !word c64_cold, c64_cold
+        !byte $c3, $c2, $cd, $38, $30
+hook_vector:
+        !word hook
+
+; ---------------------------------------------------------------- page 3 code
+tramp_image:
+!pseudopc TRAMP_AT {
+tramp:  ; runs from RAM, so clearing the MAP (which shows this payload at $6000) is safe
+        lda #$00                ; MAP megabytes back to 0 (ETHLOAD set them to $FF; BASIC 65
+        ldx #$0f                ; maps with them)
+        tay
+        ldz #$0f
+        map
+        tax                     ; no MAP
+        taz
+        map
+        eom
+        lda #$3f
+        sta $00
+        sta $01                 ; ROMs and I/O visible
+        lda #$40
+        sta $00                 ; CPU speed as on a C64
+        ldx #$ff
+        txs
+        ldy #$01
+        tys
+        see                     ; 8-bit stack at $01xx
+        sta $d02f               ; C64 I/O personality (any write that is no key)
+tramp_jmp:
+        jmp ($fffc)             ; reset into MEGA65 mode (C64 mode: $FFF6; jump mode: JMP abs)
+tramp_end:
+
+c64_cold:  ; entered by the C64 KERNAL's reset through the CBM80 signature
+        ldx #8
+-       lda c_cart_save,x       ; give $8000-$8008 back
+        sta $8000,x
+        dex
+        bpl -
+        jsr $fda3               ; IOINIT
+        lda #$00                ; RAMTAS without the RAM test:
+        tax
+-       sta+2 $0002,x           ;   clear zero page (from $02) and page 2
+        sta $0200,x
+        inx
+        bne -
+        ldx #$3c
+        ldy #$03
+        stx $b2                 ;   tape buffer at $033C
+        sty $b3
+        lda #$00
+        ldx #$08
+        ldy #$00
+        ldz #$a0
+        stq $0281               ;   BASIC RAM $0800-$9FFF ($0281-$0284)
+        ldz #$00                ; Z = 0 again for the ROM ((zp) means (zp),Z on the 45GS02)
+        lda #$04
+        sta $0288               ;   screen at $0400
+        jsr $fd15               ; RESTOR
+        jsr $ff5b               ; CINT
+        cli
+        ldq $0801               ; NEW clears the first line link: save it
+        stq c_prg_save
+        jsr $e453               ; BASIC vectors
+        jsr $e3bf               ; BASIC RAM, NEW
+        jsr $e422               ; start-up message
+        ldx #$fb
+        txs
+        lda c_params + 4        ; end address high byte: 0 = no program
+        beq c64_ready
+        ldq c_prg_save
+        stq $0801
+        lda c_params + 3
+        ldx c_params + 4
+        sta $2d                 ; end of program, as LOAD sets it
+        stx $2e
+        jsr $a533               ; LINKPRG
+        jsr $a659               ; CLR
+        lda #8
+        sta $ba                 ; current device, as after LOAD from disk
+        lda c_params
+        lsr
+        bcc c64_ready
+        ldq c_run               ; type RUN
+        stq $0277
+        ldz #$00
+        lda #4
+        sta $c6
+c64_ready:
+        jmp $a474               ; READY.
+c_run:  !text "RUN", 13
+c_params:     !fill PARAMS_LEN, 0
+c_cart_save:  !fill 9, 0
+c_prg_save:   !fill 4, 0
+c64_end_ram:
+}
+c64_end = tramp_image + (c64_end_ram - TRAMP_AT)
+tramp_len = tramp_end - TRAMP_AT
+
+!if c64_end_ram > $03fc {
+        !error "C64 cold start code does not fit into the cassette buffer"
+}
+
+; ---------------------------------------------------------------- MEGA65 interrupt hook
+hook_image:
+!pseudopc HOOK_AT {
+h_params:     !fill PARAMS_LEN, 0       ; flags, video, pad, end address
+h_prg_save:   !fill 4, 0
+h_cart_save:  !byte 0
+h_p_irq:      !32 BASIC65_IRQ_JMP + 1
+h_p_prg:      !32 $2001
+h_p_cart:     !32 $8004
+hook:   ; first interrupt after the reset, as BASIC 65's handler (with $2C000 at $C000)
+        sei
+        lda #>HOOK_AT
+        tab                     ; base page = this page: the 32-bit pointers above
+        ldz #$00
+        lda h_cart_save
+        sta [<h_p_cart],z       ; cartridge byte (before LDQ, which loads Z)
+        lda h_params + 3
+        ora h_params + 4
+        beq +
+        ldq h_prg_save          ; first bytes of the program, cleared by NEW
+        stq [<h_p_prg]
++
+        lda #$02
+        sta $d641               ; ROM writable
+        clv
+        ldq h_irq_save
+        stq [<h_p_irq]          ; BASIC's interrupt handler as before
+        lda #$00
+        sta $d641               ; ROM write protected
+        clv
+        lda #$00                ; (A holds the hypervisor's answer)
+        tab                     ; base page 0
+        lda h_params + 3
+        ldx h_params + 4
+        beq +
+        sta $82                 ; end of program (BASIC 65)
+        stx $83
+        lda h_params
+        lsr
+        bcc +
+        ldx #3
+-       lda h_run,x             ; type RUN
+        sta $02b0,x
+        dex
+        bpl -
+        lda #4
+        sta $d0
++       ldz #$00
+        cli
+        jmp BASIC65_IRQ_JMP & $ffff     ; continue with BASIC's handler (restored JMP)
+h_run:  !text "RUN", 13
+}
+hook_end:
+h_irq_save = HOOK_AT + $f0      ; BASIC's handler address (outside the copied code, so that
+                                ; it survives a later attempt, see above)
+!if HOOK_AT + (hook_end - hook_image) > h_irq_save {
+        !error "MEGA65 hook too long"
+}
+
++at NAME
+        !fill $40, 0
++at MODE
+        !fill $3e, 0
+seq:    !word 0

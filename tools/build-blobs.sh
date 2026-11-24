@@ -2,13 +2,9 @@
 # Builds the MEGA65-side binaries m65fs needs and copies them into
 # src/main/resources/io/github/paw/m65fs/blobs/.
 #
-#   ethlet_echo.bin / .map            (Ophis)
-#   ethlet_dma_load.bin / .map        (Ophis)
-#   ethlet_all_done_basic2.bin / .map (Ophis)  reset to C64 mode (+ mount, RUN)
-#   ethlet_all_done_basic65.bin / .map (Ophis) reset to MEGA65 mode (+ mount, RUN)
-#   ethlet_all_done_jump.bin / .map   (Ophis)  jump to an address (+ mount)
-#   remotesd_eth.prg                  (cc65 + mega65-libc)
-#   c64boot.prg                       (Ophis, our own src/main/asm/c64boot.a65)
+#   ethlet_echo/load/start.bin  (ACME, our own src/main/asm/ethlets/, via tools/build-ethlets.sh)
+#   remotesd_eth.prg            (cc65 + mega65-libc, from mega65-tools)
+#   c64boot.prg                 (Ophis, our own src/main/asm/c64boot.a65)
 #
 # Everything is built out-of-tree in a temp dir; the mega65-tools checkout is only read.
 #
@@ -43,11 +39,7 @@ trap 'rm -rf "$BUILD"' EXIT
 mkdir -p "$OUT"
 
 echo "== ethlets"
-for e in echo dma_load all_done_basic2 all_done_basic65 all_done_jump; do
-  "$OPHIS" -4 --no-warn "$M65TOOLS/src/tools/etherload/ethlet_$e.a65" \
-    -m "$BUILD/ethlet_$e.map" -o "$BUILD/ethlet_$e.bin"
-  cp "$BUILD/ethlet_$e.bin" "$BUILD/ethlet_$e.map" "$OUT/"
-done
+"$HERE/tools/build-ethlets.sh"
 
 echo "== c64boot.prg"
 "$OPHIS" --no-warn "$HERE/src/main/asm/c64boot.a65" -o "$BUILD/c64boot.prg"
@@ -85,7 +77,7 @@ popd >/dev/null
   echo "mega65-tools: $(git -C "$M65TOOLS" describe --always --dirty 2>/dev/null || echo unknown)"
   echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "cc65: $("${CC65_PREFIX}cl65" --version 2>&1 | head -1)"
-  (cd "$OUT" && sha256sum ethlet_*.bin remotesd_eth.prg c64boot.prg)
+  (cd "$OUT" && sha256sum remotesd_eth.prg c64boot.prg)
 } > "$OUT/PROVENANCE.txt"
 
 echo "== done"

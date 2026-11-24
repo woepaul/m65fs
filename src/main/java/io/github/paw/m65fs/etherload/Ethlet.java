@@ -3,119 +3,107 @@ package io.github.paw.m65fs.etherload;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
 
 /**
- * The 6502 code blobs ("ethlets") the MEGA65 hypervisor executes straight out of a received
- * UDP payload. Each one is loaded from {@code blobs/<name>.bin} together with the Ophis label
- * map {@code blobs/<name>.map}, from which the patchable field offsets are derived.
- *
- * <p>Offsets are relative to the start of the UDP payload (the {@code entry} label).
+ * The 45GS02 code blobs ("ethlets") that ETHLOAD.M65 executes straight out of a received UDP
+ * payload. They are m65fs' own (src/main/asm/ethlets/, built by tools/build-ethlets.sh, see
+ * docs/ethlets-spec.md): each image is exactly one payload, with its parameter fields at fixed
+ * offsets (the constants below, checked by the sources) and the 16-bit sequence number filled
+ * in by the host. The MEGA65 answers every ethlet with the unchanged payload.
  */
 public enum Ethlet {
-  /** Echoes the packet back; used as ping. Sequence number at {@code seq_num}. */
-  ECHO("ethlet_echo", 1024),
-  /** DMA-copies its {@code data} area to a 28-bit address and echoes the whole packet as ACK. */
-  DMA_LOAD("ethlet_dma_load", 1280),
+  /** Echoes the packet back; used as ping. */
+  ECHO("ethlet_echo", 256, 0x0fe),
+  /** Copies its data to a 28-bit address, then echoes the packet as acknowledgement. */
+  LOAD("ethlet_load", 1280, 0x0fe),
   /**
-   * Resets into C64 mode: optionally mounts a D81, keeps a program loaded at $0801, sets the
-   * BASIC end-of-program pointer and RUNs it.
+   * Echoes the packet, then optionally mounts a D81, returns to the saved working directory and
+   * resets into MEGA65 or C64 mode (keeping and optionally RUNning a BASIC program), or jumps
+   * to an address.
    */
-  ALL_DONE_BASIC2("ethlet_all_done_basic2", 1024),
-  /**
-   * Resets into MEGA65 mode: detaches the drives, optionally mounts a D81, keeps a program
-   * loaded at $2001, sets the BASIC end-of-program pointer and RUNs it.
-   */
-  ALL_DONE_BASIC65("ethlet_all_done_basic65", 1024),
-  /** Optionally mounts a D81 and jumps to an address (no reset, no ROM initialisation). */
-  ALL_DONE_JUMP("ethlet_all_done_jump", 1024);
+  START("ethlet_start", 1088, 0x43e);
 
-  private static final String ENTRY_LABEL = "entry";
+  /** LOAD: destination address bits 20-27 (the DMA job's destination MB). */
+  public static final int LOAD_DEST_MB = 0x00e;
+  /** LOAD: byte count (LE16, 1..{@value #LOAD_MAX}). */
+  public static final int LOAD_COUNT = 0x011;
+  /** LOAD: destination address bits 0-15 (LE16). */
+  public static final int LOAD_DEST = 0x016;
+  /** LOAD: destination address bits 16-19 (the DMA job's destination bank). */
+  public static final int LOAD_DEST_BANK = 0x018;
+  /** LOAD: the data. */
+  public static final int LOAD_DATA = 0x100;
+  public static final int LOAD_MAX = 1024;
+
+  /**
+   * START: NUL-terminated disk image name, as Hyppo's setname takes it (first byte 0 = none);
+   * at a page boundary in the Ethernet buffer, where setname reads it.
+   */
+  public static final int START_IMAGE = 0x3c0;
+  /** START: mode, see {@code START_MODE_*}. */
+  public static final int START_MODE = 0x400;
+  /** START: flags, see {@link #START_FLAG_RUN}. */
+  public static final int START_FLAGS = 0x401;
+  /** START: video standard (0 unchanged, 1 PAL, 2 NTSC). */
+  public static final int START_VIDEO = 0x402;
+  /** START: end address of the BASIC program (LE16, 0 = none), or the jump address. */
+  public static final int START_ADDRESS = 0x404;
+  public static final int START_IMAGE_MAX = 63;
+  public static final int START_MODE_MEGA65 = 0;
+  public static final int START_MODE_C64 = 1;
+  public static final int START_MODE_JUMP = 2;
+  public static final int START_FLAG_RUN = 0x01;
 
   private final String resourceName;
   private final int packetSize;
-  private volatile Loaded loaded;
+  private final int seqOffset;
+  private volatile byte[] image;
 
-  Ethlet(String resourceName, int packetSize) {
+  Ethlet(String resourceName, int packetSize, int seqOffset) {
     this.resourceName = resourceName;
     this.packetSize = packetSize;
+    this.seqOffset = seqOffset;
   }
 
-  /** Size of the UDP payload sent for this ethlet (the image is zero-padded to this size). */
+  /** Size of the UDP payload (the image has exactly this size). */
   public int packetSize() {
     return packetSize;
   }
 
-  /** Returns a fresh, mutable copy of the ethlet image, zero-padded to {@link #packetSize()}. */
+  /** Offset of the 16-bit sequence number in the payload. */
+  public int seqOffset() {
+    return seqOffset;
+  }
+
+  /** Returns a fresh, mutable copy of the ethlet image. */
   public byte[] newPacket() {
-    return Arrays.copyOf(load().image, packetSize);
+    return load().clone();
   }
 
-  /**
-   * Offset of a label from the Ophis map, relative to the start of the payload.
-   *
-   * @throws IllegalArgumentException if the label is unknown or lies outside the packet
-   */
-  public int offset(String label) {
-    Integer addr = load().labels.get(label);
-    if (addr == null) {
-      throw new IllegalArgumentException(name() + ": unknown label '" + label + "'");
+  private byte[] load() {
+    byte[] i = image;
+    if (i == null) {
+      i = Blobs.read(resourceName + ".bin");
+      if (i.length != packetSize || (i[0] & 0xff) != 0xa9) {
+        throw new IllegalStateException(resourceName + ".bin must be " + packetSize
+            + " bytes starting with $A9 (LDA #), is " + i.length + " bytes");
+      }
+      image = i;
     }
-    int off = addr - load().entry;
-    if (off < 0 || off >= packetSize) {
-      throw new IllegalArgumentException(name() + ": label '" + label + "' is outside the packet (offset " + off + ")");
-    }
-    return off;
+    return i;
   }
 
-  private Loaded load() {
-    Loaded l = loaded;
-    if (l == null) {
-      synchronized (this) {
-        l = loaded;
-        if (l == null) {
-          loaded = l = Loaded.of(resourceName, packetSize);
-        }
+  /** The ethlet a packet was made from, recognised by size and code, or {@code null}. */
+  public static Ethlet of(byte[] packet) {
+    for (Ethlet e : values()) {
+      // the sizes differ; the first bytes are code (LOAD's host fields start at $0E)
+      if (packet.length == e.packetSize && Arrays.equals(packet, 0, 8, e.load(), 0, 8)) {
+        return e;
       }
     }
-    return l;
-  }
-
-  private record Loaded(byte[] image, int entry, Map<String, Integer> labels) {
-    static Loaded of(String name, int packetSize) {
-      byte[] image = Blobs.read(name + ".bin");
-      if (image.length > packetSize) {
-        throw new IllegalStateException(name + ".bin is " + image.length + " bytes, larger than packet size " + packetSize);
-      }
-      Map<String, Integer> labels = parseMap(new String(Blobs.read(name + ".map"), StandardCharsets.US_ASCII));
-      Integer entry = labels.get(ENTRY_LABEL);
-      if (entry == null) {
-        throw new IllegalStateException(name + ".map has no '" + ENTRY_LABEL + "' label");
-      }
-      return new Loaded(image, entry, Map.copyOf(labels));
-    }
-  }
-
-  /** Parses Ophis map lines of the form {@code $6840 | entry | file.a65:12}; anonymous labels are skipped. */
-  static Map<String, Integer> parseMap(String map) {
-    Map<String, Integer> labels = new HashMap<>();
-    for (String line : map.split("\\R")) {
-      String[] cols = line.split("\\|");
-      if (cols.length < 2) {
-        continue;
-      }
-      String addr = cols[0].strip();
-      String label = cols[1].strip();
-      if (!addr.startsWith("$") || label.equals("*") || label.isEmpty()) {
-        continue;
-      }
-      labels.put(label, Integer.parseInt(addr.substring(1), 16));
-    }
-    return labels;
+    return null;
   }
 
   /** Access to the bundled MEGA65 binaries. */

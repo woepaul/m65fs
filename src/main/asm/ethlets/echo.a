@@ -1,0 +1,21 @@
+; echo.a -- ECHO ethlet (part of m65fs, GPL-3): answers with its own payload. The host uses
+; it as ping after the trigger. 256 bytes; sequence number at offset $FE.
+
+!source "common.a"
+
+SIZE = 256
+
+* = payload
+        lda #$00                ; LDA # first: ETHLOAD only calls payloads starting with $A9
+        sta $d711               ; stop audio DMA, so a sample playing when the trigger hit
+                                ; does not keep sounding during the transfer
+        +wait_tx
+        sta $d707               ; in-line DMA: the job list follows
+        !byte $0b               ; F018B job format
+        !byte $80, $ff, $81, $ff ; source and destination MB $FF
+        +reply_jobs SIZE
+        +send SIZE
+        rts
+
++at $fe
+seq:    !word 0

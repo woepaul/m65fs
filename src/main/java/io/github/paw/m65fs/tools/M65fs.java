@@ -60,7 +60,8 @@ public final class M65fs {
   public static final String CARD_PREFIX = "m65:";
 
   private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
-  private static final List<String> COMMANDS = List.of("ls", "tree", "cd", "pwd", "cp", "mv", "rm", "mkdir", "cat",
+  /** The commands; each has a link {@code m65.COMMAND} (bin/, and made by the install scripts). */
+  static final List<String> COMMANDS = List.of("ls", "tree", "cd", "pwd", "cp", "mv", "rm", "mkdir", "cat",
       "stat", "df", "defrag", "boot", "run", "reset", "mount", "peek", "discover");
 
   private final PrintStream out;
@@ -125,6 +126,11 @@ public final class M65fs {
   }
 
   private int dispatch(List<String> a) {
+    if (a.equals(List.of("--list-commands"))) {
+      // for scripts that create the m65.COMMAND links (tools/install.sh, tools/build-native.sh)
+      COMMANDS.forEach(out::println);
+      return 0;
+    }
     if (a.isEmpty() || a.getFirst().equals("help") || a.getFirst().equals("--help")) {
       usage(a.isEmpty() ? err : out);
       return a.isEmpty() ? 1 : 0;

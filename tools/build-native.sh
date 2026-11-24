@@ -9,7 +9,6 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=25.0.2
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/m65fs"
-COMMANDS=(ls tree cd pwd cp mv rm mkdir cat stat df defrag boot run reset mount peek discover)
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  PLATFORM=linux-x64 ;;
@@ -62,6 +61,8 @@ print("== all", len(os.listdir(sys.argv[2])), "blobs embedded")
 PY
 fi
 
+mapfile -t COMMANDS < <("$OUT/m65" --list-commands)
+[[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$OUT/m65 --list-commands gave no commands" >&2; exit 1; }
 for c in "${COMMANDS[@]}"; do
   ln -sf m65 "$OUT/m65.$c"
 done

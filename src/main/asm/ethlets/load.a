@@ -1,0 +1,48 @@
+; load.a -- LOAD ethlet (part of m65fs, GPL-3): copies up to 1024 bytes of its payload to a
+; 28-bit address, then answers with the whole payload as acknowledgement. 1280 bytes.
+;
+; Everything is one in-line DMA job list: the data copy followed by the reply jobs. The host
+; fills in the fields of the first job (fixed offsets, checked below):
+;   $0E  destination MB (address bits 20-27)
+;   $11  byte count (LE16, 1..1024)
+;   $16  destination address bits 0-15 (LE16)
+;   $18  destination bank (address bits 16-19)
+;   $FE  sequence number (LE16)
+;   $100 data
+; The host never lets a copy cross a 1 MiB boundary, so one MB value is enough.
+
+!source "common.a"
+
+SIZE = 1280
+DATA = $100
+
+* = payload
+        +wait_tx                ; starts with LDA #$10 = $A9 $10, as ETHLOAD requires
+        sta $d707               ; in-line DMA: the job list follows
+        !byte $0b               ; F018B job format
+        !byte $80, $ff          ; source MB $FF (Ethernet buffer)
+        !byte $81
+dest_mb:
+        !byte $00               ; destination MB (host)
+        !byte $00               ; end of options
+        !byte $04               ; copy, chained
+count:  !word $0000             ; byte count (host)
+        !word RX + FRAME_HEADERS + DATA
+        !byte ETH_BANK
+dest:   !word $0000             ; destination bits 0-15 (host)
+dest_bank:
+        !byte $00               ; destination bank (host)
+        !byte $00
+        !word $0000
+        !byte $81, $ff          ; destination MB $FF again for the reply
+        +reply_jobs SIZE
+        +send SIZE
+        rts
+
+!if dest_mb - payload != $0e or count - payload != $11 or dest - payload != $16 or dest_bank - payload != $18 {
+        !error "LOAD fields moved; update Ethlet.java and docs/ethlets-spec.md"
+}
+
++at $fe
+seq:    !word 0
+        !fill SIZE - DATA, 0

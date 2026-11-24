@@ -32,8 +32,7 @@ final class BootLoaders {
   /**
    * MEGA65 mode: the BASIC 65 program {@code 0 MOUNT"image":RUN"name"} at $2001.
    *
-   * <p>The image is mounted by BASIC instead of by the reset ethlet: with a disk attached during
-   * the reset, the MEGA65 ROM does not start the program in memory (verified on hardware).
+   * <p>The image is mounted by BASIC (MOUNT also makes it the default disk for RUN).
    */
   static byte[] mega65(byte[] name, String image) {
     checkName(name);

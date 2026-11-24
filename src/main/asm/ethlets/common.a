@@ -1,0 +1,95 @@
+; common.a -- shared definitions of the m65fs ethlets (part of m65fs, GPL-3).
+;
+; An ethlet is the payload of a UDP datagram to port 4510. ETHLOAD.M65 (mega65-core,
+; src/utilities/etherload.a65) calls it with JSR $6840 when its first byte is $A9 (LDA #),
+; with B = $00, the MEGA65 I/O personality, the fast CPU, and the Ethernet buffer MAPped
+; at $6000-$7FFF. In $6800-$6FFF, reads return the received frame (RX buffer: two length
+; bytes, then the frame), writes go to the frame to be sent (TX buffer, no length prefix).
+; So an ethlet can never change its own bytes.
+;
+; See docs/ethlets-spec.md for the protocol. Assemble with ACME 0.97: acme --cpu m65.
+
+!cpu m65
+
+payload = $6840                 ; first byte of the UDP payload (RX offset $40)
+FRAME_HEADERS = 14 + 40 + 8     ; Ethernet + IPv6 + UDP
+
+; The Ethernet buffer as DMA sees it: MB $FF, bank $D with I/O ($8D), $E800 = RX length
+; bytes / TX frame start. RX frame offsets are therefore +2 against TX.
+ETH_BANK = $8d
+RX = $e802                      ; received frame
+TX = $e800                      ; frame to send
+
+; Hypervisor DOS call: A = call number; carry set = success.
+!macro hyppo .call {
+        lda #.call
+        sta $d640
+        clv                     ; required: the hypervisor returns to the instruction after STA
+}
+
+; Wait until the Ethernet controller can take a new frame. Destroys A.
+!macro wait_tx {
+        lda #$10                ; $D6E1 bit 4: TX ready
+-       bit $d6e1
+        beq -
+}
+
+; The DMA jobs that turn the received frame into the reply in the TX buffer: the whole
+; frame with the request payload unchanged, MAC addresses, IPv6 addresses and UDP ports
+; swapped. Swapping does not change the UDP checksum (a one's-complement sum does not
+; depend on the order of its words), so the request's checksum stays valid.
+; Expects the source and destination MB to be $FF (DMA options $80/$81 persist across
+; chained jobs). .size = payload size; the last job ends the chain.
+!macro reply_jobs .size {
+        !byte $00               ; no further options
+        !byte $04               ; copy, chained
+        !word FRAME_HEADERS + .size
+        !word RX
+        !byte ETH_BANK
+        !word TX
+        !byte ETH_BANK
+        !byte $00
+        !word $0000
+        +dma_copy RX + 6,  TX,      6, $04     ; Ethernet: request source -> destination
+        +dma_copy $36e9,   TX + 6,  6, $04     ; own MAC ($D6E9-$D6EE) -> source
+        +dma_copy RX + 56, TX + 54, 2, $04     ; UDP destination port -> source port
+        +dma_copy RX + 54, TX + 56, 2, $04     ; UDP source port -> destination port
+        +dma_copy RX + 22, TX + 38, 16, $04    ; IPv6 source -> destination
+        +dma_copy RX + 38, TX + 22, 16, $00    ; IPv6 destination -> source (end of chain)
+}
+
+; One F018B copy job within the Ethernet/I/O bank (no options).
+!macro dma_copy .src, .dst, .count, .cmd {
+        !byte $00
+        !byte .cmd
+        !word .count
+        !word .src
+        !byte ETH_BANK
+        !word .dst
+        !byte ETH_BANK
+        !byte $00
+        !word $0000
+}
+
+; Hand the reply in the TX buffer to the controller.
+!macro send .size {
+        lda #<(FRAME_HEADERS + .size)
+        ldx #>(FRAME_HEADERS + .size)
+        sta $d6e2
+        stx $d6e3
+        lda #$01
+        sta $d6e4
+}
+
+; Fail the build if the code reaches a fixed field at payload offset .offset.
+!macro below .offset {
+        !if * > payload + .offset {
+                !error "code overlaps the field at payload offset ", .offset
+        }
+}
+
+; Place the assembly at payload offset .offset (for fixed fields), zero-filling the gap.
+!macro at .offset {
+        +below .offset
+        !fill payload + .offset - *, 0
+}

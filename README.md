@@ -2,8 +2,9 @@
 
 Tools and a Java library for working with a [MEGA65](https://mega65.org) over Ethernet:
 manage the files on its SD card and start software on it from your computer. You don't need
-a card reader, and nothing has to be installed on the MEGA65. m65fs speaks the same
-protocols as mega65-tools' `mega65_ftp -e` and `etherload`.
+a card reader, and nothing has to be installed on the MEGA65. m65fs uses the hypervisor's
+Ethernet remote control (`ETHLOAD.M65`) with its own small 45GS02 programs, and the transfer
+helper of mega65-tools' `mega65_ftp -e`.
 
 - **Command line tools in the style of the Unix core utilities:** `m65.ls`, `m65.tree`,
   `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`. They copy
@@ -49,13 +50,14 @@ works on SD card image files. Everything has been tested on real hardware.
 For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
 
 1. **Bootstrap.** A trigger packet puts the MEGA65 hypervisor into Ethernet remote control.
-   Small 6502 programs ("ethlets") then upload the helper `remotesd_eth.prg` and `RUN` it.
+   Small 45GS02 programs ("ethlets", m65fs' own) then upload the helper `remotesd_eth.prg` and
+   `RUN` it.
 2. **Session.** The helper serves raw SD card sectors over UDP (IPv6 link-local, port 4510).
    The library sends requests through a sliding window with retransmission.
 3. **FAT32 on the PC.** All file system logic runs in Java: MBR, FAT32, VFAT long names and
    cluster allocation. The MEGA65 is only a remote block device.
 
-Starting software works like `etherload`: after the trigger, ethlets write the program (or a
+Starting software works the same way: after the trigger, ethlets write the program (or a
 small boot loader) into memory, mount a disk image and reset into C64 or MEGA65 mode.
 
 `PLAN.md` has the full protocol analysis.
@@ -218,7 +220,7 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   tool to the next and BASIC sees it too (`DIR U12`), and a `CHDIR` in BASIC is where
   relative card paths start. This needs a hypervisor with `trap_dos_getcwd` and
   `trap_dos_restorecwd` (see below); otherwise relative paths start at `/` and `m65.cd`
-  reports an error. `m65.boot`, `m65.run` and `m65.reset` leave the MEGA65 in `/`.
+  reports an error. `m65.boot`, `m65.run` and `m65.reset` keep it too: BASIC starts in it.
 - **Environment variables:** `M65_TARGET=fe80::…%if` (default: discovery),
   `M65_IMAGE=card.img` (an SD card image instead of a MEGA65) and `M65_RESET=1` (reset after
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
@@ -285,8 +287,8 @@ List<Defragmenter.Result> results = Defragmenter.defragment(fs, report.paths(), 
 
 ## Booting disks and running programs
 
-The `launch` package uses the hypervisor's Ethernet remote control, the protocol of
-mega65-tools' `etherload`, to start software. Every launch takes over the machine.
+The `launch` package uses the hypervisor's Ethernet remote control and m65fs' ethlets to start
+software. Every launch takes over the machine.
 
 ```java
 try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), Map.of())) {
@@ -394,14 +396,19 @@ afterwards.
 
 ### Blobs
 
-`src/main/resources/io/github/paw/m65fs/blobs/` holds the five ethlets,
-`remotesd_eth.prg` and our own `c64boot.prg` (built from `src/main/asm/c64boot.a65`). They come from
-[mega65-tools](https://github.com/MEGA65/mega65-tools) (GPL-3); `PROVENANCE.txt` lists the
-commit and checksums. `remotesd_eth.prg` is built from the `remotesd-cwd` branch, which adds
-the working directory request (opcode `$13`) and returns to the saved working directory at
-startup. Rebuild them with `tools/build-blobs.sh`, which needs a mega65-tools
-checkout, Ophis and git. It builds its own cc65, because some distribution builds crash on
-the helper.
+`src/main/resources/io/github/paw/m65fs/blobs/` holds:
+
+* the three ethlets `ethlet_echo.bin`, `ethlet_load.bin` and `ethlet_start.bin`: m65fs' own,
+  described in `docs/ethlets-spec.md`, sources in `src/main/asm/ethlets/`,
+  built with ACME (`--cpu m65`) by `tools/build-ethlets.sh`;
+* our own `c64boot.prg` (built from `src/main/asm/c64boot.a65` with Ophis);
+* `remotesd_eth.prg`, the transfer helper from
+  [mega65-tools](https://github.com/MEGA65/mega65-tools) (GPL-3), built from the
+  `remotesd-cwd` branch, which adds the working directory request (opcode `$13`) and returns
+  to the saved working directory at startup. `PROVENANCE.txt` lists the commit and checksums.
+
+Rebuild everything with `tools/build-blobs.sh`, which needs ACME, a mega65-tools checkout,
+Ophis and git. It builds its own cc65, because some distribution builds crash on the helper.
 
 ## License
 

@@ -11,8 +11,9 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Talks to the MEGA65 hypervisor's Ethernet remote control by sending ethlets: the bootstrap
- * phase of {@code mega65_ftp -e} that uploads and starts {@code remotesd_eth.prg}.
+ * Talks to the MEGA65 hypervisor's Ethernet remote control (ETHLOAD.M65) by sending ethlets:
+ * loads data into memory and starts programs, including the transfer helper
+ * {@code remotesd_eth.prg}.
  */
 public final class Etherload {
 
@@ -24,8 +25,8 @@ public final class Etherload {
   public static final int BASIC_START = 0x0801;
   /** Load address of a MEGA65 (BASIC 65) program. */
   public static final int BASIC65_START = 0x2001;
-  /** Payload bytes per DMA load packet (mega65_ftp uses 1 KiB blocks). */
-  public static final int BLOCK_SIZE = 1024;
+  /** Payload bytes per LOAD packet. */
+  public static final int BLOCK_SIZE = Ethlet.LOAD_MAX;
   /** Window size used during bootstrap ({@code queue_length} default in etherload_common.c). */
   public static final int WINDOW = 4;
 
@@ -39,21 +40,20 @@ public final class Etherload {
       0x65, 'G', 'S', 'K', 'E', 'Y', 'C', 'O', 'D', 'E', 0x00, (byte) 0x80};
 
   private final SlidingWindow window;
-  private final EthletProtocols.DmaLoad dma = EthletProtocols.DmaLoad.INSTANCE;
 
   /**
-   * Uses {@code window}'s link; switches the window to the DMA-load protocol and a capacity of
+   * Uses {@code window}'s link; switches the window to the LOAD protocol and a capacity of
    * {@value #WINDOW}. The window must be idle.
    */
   public Etherload(SlidingWindow window) {
     this.window = Objects.requireNonNull(window);
-    window.setProtocol(dma);
+    window.setProtocol(EthletProtocols.Load.INSTANCE);
     window.setCapacity(WINDOW);
   }
 
   /** Creates a fresh window on {@code link} for the bootstrap. */
   public static Etherload on(UdpLink link) {
-    return new Etherload(new SlidingWindow(link, EthletProtocols.DmaLoad.INSTANCE));
+    return new Etherload(new SlidingWindow(link, EthletProtocols.Load.INSTANCE));
   }
 
   public SlidingWindow window() {
@@ -131,14 +131,13 @@ public final class Etherload {
     }
   }
 
-  byte[] dmaPacket(int address, byte[] data, int off, int n) {
-    byte[] p = Ethlet.DMA_LOAD.newPacket();
-    p[dma.romWriteEnable] = 0;
-    WindowProtocol.putLe16(p, dma.destAddress, address);
-    p[dma.destBank] = (byte) ((address >>> 16) & 0x0f);
-    p[dma.destMb] = (byte) (address >>> 20);
-    WindowProtocol.putLe16(p, dma.byteCount, n);
-    System.arraycopy(data, off, p, dma.data, n);
+  static byte[] dmaPacket(int address, byte[] data, int off, int n) {
+    byte[] p = Ethlet.LOAD.newPacket();
+    p[Ethlet.LOAD_DEST_MB] = (byte) (address >>> 20);
+    p[Ethlet.LOAD_DEST_BANK] = (byte) ((address >>> 16) & 0x0f);
+    WindowProtocol.putLe16(p, Ethlet.LOAD_DEST, address);
+    WindowProtocol.putLe16(p, Ethlet.LOAD_COUNT, n);
+    System.arraycopy(data, off, p, Ethlet.LOAD_DATA, n);
     return p;
   }
 
@@ -146,19 +145,9 @@ public final class Etherload {
     window.awaitAll(timeout);
   }
 
-  /**
-   * Sends {@link Ethlet#ALL_DONE_BASIC2}: sets the BASIC end-of-program pointer and optionally
-   * RUNs the program.
-   */
-  public void allDoneBasic2(int dataEndAddress, boolean run, boolean cartSignatureDetection, Duration timeout)
-      throws IOException {
-    singleCommand(basic2Packet(dataEndAddress, run, new Reset(null, Video.UNCHANGED, cartSignatureDetection)),
-        timeout);
-  }
-
-  /** PAL/NTSC switch done by the reset ethlets. */
+  /** PAL/NTSC switch done by the reset. */
   public enum Video {
-    UNCHANGED(0x00), PAL(0x01), NTSC(0xff);
+    UNCHANGED(0), PAL(1), NTSC(2);
 
     final int code;
 
@@ -168,27 +157,26 @@ public final class Etherload {
   }
 
   /**
-   * Options of the reset ethlets.
+   * Options of a reset.
    *
    * @param mount D81 image in the SD card root to attach as drive 0, or {@code null}
    * @param video video standard to switch to
-   * @param cartridgeDetection honour a CBM80 cartridge signature at $8004 on reset
    */
-  public record Reset(String mount, Video video, boolean cartridgeDetection) {
+  public record Reset(String mount, Video video) {
     public Reset {
       Objects.requireNonNull(video);
     }
 
     public static Reset defaults() {
-      return new Reset(null, Video.UNCHANGED, false);
+      return new Reset(null, Video.UNCHANGED);
     }
 
     public Reset withMount(String image) {
-      return new Reset(image, video, cartridgeDetection);
+      return new Reset(image, video);
     }
 
     public Reset withVideo(Video v) {
-      return new Reset(mount, v, cartridgeDetection);
+      return new Reset(mount, v);
     }
   }
 
@@ -220,66 +208,57 @@ public final class Etherload {
   }
 
   /**
-   * Resets into C64 mode ({@link Ethlet#ALL_DONE_BASIC2}).
+   * Resets into C64 mode ({@link Ethlet#START}). The working directory saved by the trigger is
+   * restored after the optional mount.
    *
    * @param programEnd end address of a BASIC program loaded at $0801 (kept across the reset), or
    *     0 for none
    * @param run type RUN after the reset
    */
   public void resetToC64(int programEnd, boolean run, Reset options) throws IOException {
-    singleCommand(basic2Packet(programEnd, run, options), Duration.ofSeconds(2));
-  }
-
-  private static byte[] basic2Packet(int programEnd, boolean run, Reset options) {
-    Ethlet e = Ethlet.ALL_DONE_BASIC2;
-    byte[] p = e.newPacket();
-    WindowProtocol.putLe16(p, e.offset("data_end_address"), programEnd);
-    p[e.offset("do_run")] = (byte) (run ? 1 : 0);
-    p[e.offset("enable_cart_signature")] = (byte) (options.cartridgeDetection() ? 1 : 0);
-    p[e.offset("restore_prg")] = (byte) (programEnd != 0 ? 1 : 0);
-    p[e.offset("set_video_mode")] = (byte) options.video().code;
-    putImageName(p, e.offset("d81filename"), options.mount(), 63);
-    return p;
+    start(Ethlet.START_MODE_C64, run, options.video(), programEnd, options.mount());
   }
 
   /**
-   * Resets into MEGA65 mode ({@link Ethlet#ALL_DONE_BASIC65}). This always detaches the current
-   * disk images first, so a reset without {@code mount} leaves drive 0 empty.
+   * Resets into MEGA65 mode ({@link Ethlet#START}). This always detaches the current disk images
+   * first, so a reset without {@code mount} leaves drive 0 empty. The working directory saved
+   * by the trigger is restored after the optional mount.
    *
    * @param programEnd end address of a BASIC 65 program loaded at $2001 (kept across the reset),
    *     or 0 for none
    * @param run type RUN after the reset
    */
   public void resetToMega65(int programEnd, boolean run, Reset options) throws IOException {
-    Ethlet e = Ethlet.ALL_DONE_BASIC65;
-    byte[] p = e.newPacket();
-    int autostart = e.offset("autostart"); // filesize (LE16), do_run, enable_cart_signature
-    WindowProtocol.putLe16(p, autostart, programEnd);
-    p[autostart + 2] = (byte) (run ? 1 : 0);
-    p[autostart + 3] = (byte) (options.cartridgeDetection() ? 1 : 0);
-    p[e.offset("restore_prg")] = (byte) (programEnd != 0 ? 1 : 0);
-    p[e.offset("set_video_mode")] = (byte) options.video().code;
-    putImageName(p, e.offset("d81filename"), options.mount(), 63);
-    singleCommand(p, Duration.ofSeconds(2));
+    start(Ethlet.START_MODE_MEGA65, run, options.video(), programEnd, options.mount());
   }
 
   /**
-   * Optionally mounts a D81 (name of at most 15 characters) and jumps to {@code address}
-   * ({@link Ethlet#ALL_DONE_JUMP}); no reset, the KERNAL is not initialised.
+   * Optionally mounts a D81 and jumps to {@code address} ({@link Ethlet#START}); no reset, the
+   * KERNAL is not initialised.
    */
   public void jump(int address, String mount) throws IOException {
     if (address < 0 || address > 0xffff) {
       throw new IllegalArgumentException("jump address must be $0000-$FFFF");
     }
-    Ethlet e = Ethlet.ALL_DONE_JUMP;
-    byte[] p = e.newPacket();
-    WindowProtocol.putLe16(p, e.offset("jump_addr") + 1, address); // operand of JMP
-    putImageName(p, e.offset("d81filename"), mount, 15);
-    singleCommand(p, Duration.ofSeconds(2));
+    start(Ethlet.START_MODE_JUMP, false, Video.UNCHANGED, address, mount);
   }
 
-  /** Longest disk image name the reset ethlets take; the jump ethlet takes 15. */
-  public static final int MAX_IMAGE_NAME = 63;
+  private void start(int mode, boolean run, Video video, int address, String mount) throws IOException {
+    singleCommand(startPacket(mode, run, video, address, mount), Duration.ofSeconds(2));
+  }
+
+  static byte[] startPacket(int mode, boolean run, Video video, int address, String mount) {
+    byte[] p = Ethlet.START.newPacket();
+    p[Ethlet.START_MODE] = (byte) mode;
+    p[Ethlet.START_FLAGS] = (byte) (run ? Ethlet.START_FLAG_RUN : 0);
+    p[Ethlet.START_VIDEO] = (byte) video.code;
+    WindowProtocol.putLe16(p, Ethlet.START_ADDRESS, address);
+    putImageName(p, Ethlet.START_IMAGE, mount, Ethlet.START_IMAGE_MAX);
+    return p;
+  }
+
+  /** Longest disk image name the ethlets take. */
+  public static final int MAX_IMAGE_NAME = Ethlet.START_IMAGE_MAX;
 
   /** Validates a disk image name for the ethlets (printable ASCII, at most {@code maxLen}). */
   public static void checkImageName(String name, int maxLen) {
@@ -290,8 +269,7 @@ public final class Etherload {
   }
 
   /**
-   * Hyppo's dos_setname expects the name as the ethlets get it from etherload.c: letters with
-   * their case swapped (PETSCII), NUL-terminated.
+   * Hyppo's dos_setname expects PETSCII: letters with their case swapped, NUL-terminated.
    */
   static void putImageName(byte[] p, int off, String name, int maxLen) {
     if (name == null) {
@@ -307,7 +285,7 @@ public final class Etherload {
   }
 
   /**
-   * The complete bootstrap of {@code mega65_ftp -e}: trigger the hypervisor, ping, upload
+   * The complete bootstrap: trigger the hypervisor, ping, upload
    * {@code prg} (a C64-style program file with 2-byte load address) to {@value #BASIC_START}
    * and RUN it.
    *
@@ -332,10 +310,8 @@ public final class Etherload {
   public void startHelper(byte[] prg) throws IOException {
     checkHelper(prg);
     LOG.log(Level.DEBUG, "uploading helper routine ({0} bytes)", prg.length - 2);
-    writeMemory(BASIC_START, prg, 2, prg.length - 2, DEFAULT_TIMEOUT);
-    awaitAll(DEFAULT_TIMEOUT);
-    // mega65_ftp.c patches data_end_address with $0801, not with the real end address.
-    allDoneBasic2(BASIC_START, true, false, Duration.ofSeconds(2));
+    int end = writeProgram(prg);
+    resetToC64(end, true, Reset.defaults());
     LOG.log(Level.DEBUG, "helper routine started");
   }
 
@@ -345,7 +321,7 @@ public final class Etherload {
     }
   }
 
-  /** Swaps in the single-command protocol for one packet, like {@code ethl_single_command}. */
+  /** Swaps in the single-command protocol for one packet. */
   private void singleCommand(byte[] packet, Duration timeout) throws IOException {
     window.awaitAll(timeout);
     WindowProtocol previous = window.protocol();
