@@ -72,7 +72,7 @@ PY
 fi
 
 COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
-while IFS= read -r c; do COMMANDS+=("${c%$'\r'}"); done < <("$BIN" --list-commands)
+while IFS= read -r c; do COMMANDS+=("${c//$'\r'/}"); done < <("$BIN" --list-commands)
 [[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$BIN --list-commands gave no commands" >&2; exit 1; }
 for c in "${COMMANDS[@]}"; do
   if [[ $PLATFORM == windows-* ]]; then

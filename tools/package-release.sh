@@ -30,7 +30,11 @@ cp "$HERE/README.md" "$HERE/LICENSE" "$HERE/CHANGELOG.md" "$STAGE/"
 if [[ $P == windows-* ]]; then
   cp "$HERE/target/native/m65.exe" "$HERE"/target/native/m65.*.cmd "$STAGE/"
   rm -f "$DIST/$NAME.zip"
-  (cd "$DIST" && powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath '$NAME.zip'")
+  if command -v 7z >/dev/null; then   # standard "/" separators (Compress-Archive writes "\")
+    (cd "$DIST" && 7z a -tzip "$NAME.zip" "$NAME" >/dev/null)
+  else
+    (cd "$DIST" && powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath '$NAME.zip'")
+  fi
   echo "$DIST/$NAME.zip"
 else
   cp -P "$HERE/target/native/m65" "$HERE"/target/native/m65.* "$STAGE/"   # -P: keep the links

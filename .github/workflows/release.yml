@@ -33,6 +33,8 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      - name: Maven (retried, Maven Central sometimes fails a download)
+        run: for i in 1 2 3; do ./mvnw -B -q -v && exit 0; sleep 15; done; exit 1
       - name: Tools for the image tests and the MEGA65 code
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dosfstools mtools acme
       - name: The bundled MEGA65 code matches its sources

@@ -4,6 +4,14 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- Windows release: the `m65.COMMAND.cmd` wrappers in 0.1.0's zip had a carriage return in
+  their names, and the zip used `\` as path separator. The zip is now made with 7-Zip, the
+  command list is written with `\n` on every platform, and every release archive is checked
+  (entry names, binary, wrappers or links) in CI and before a release.
+- CI and release retry fetching Maven (a failed download from Maven Central failed a run).
+
 ## 0.1.0 (2026-11-24)
 
 ### Working directory shared with the MEGA65

@@ -42,6 +42,9 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Maven (retried, Maven Central sometimes fails a download)
+        run: for i in 1 2 3; do ./mvnw -B -q -v && exit 0; sleep 15; done; exit 1
+
       - name: Set the release version
         if: inputs.version != ''
         run: ./mvnw -B -q versions:set -DnewVersion="${{ inputs.version }}" -DgenerateBackupPoms=false
@@ -65,9 +68,12 @@ jobs:
           "$bin" help > /dev/null
           ls target/native
 
-      - name: Package
-        if: inputs.version != ''
-        run: tools/package-release.sh "${{ inputs.version }}"
+      - name: Package and check the archive
+        run: |
+          bin=target/native/m65; [[ -f $bin.exe ]] && bin=$bin.exe
+          archive=$(tools/package-release.sh "${{ inputs.version || 'ci' }}")
+          py=python3; command -v python3 >/dev/null || py=python
+          $py tools/check-release-archive.py "$archive" $("$bin" --list-commands | tr -d '\r')
 
       - uses: actions/upload-artifact@v4
         if: inputs.version != ''

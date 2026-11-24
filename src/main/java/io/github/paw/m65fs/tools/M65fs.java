@@ -136,12 +136,14 @@ public final class M65fs {
 
   private int dispatch(List<String> a) {
     if (a.equals(List.of("--version"))) {
-      out.println("m65fs " + version());
+      out.print("m65fs " + version() + "\n");
       return 0;
     }
     if (a.equals(List.of("--list-commands"))) {
-      // for scripts that create the m65.COMMAND links (tools/install.sh, tools/build-native.sh)
-      COMMANDS.forEach(out::println);
+      // for scripts that create the m65.COMMAND links (tools/install.sh, tools/build-native.sh);
+      // "\n" also on Windows, so that no "\r" ends up in a file name
+      COMMANDS.forEach(c -> out.print(c + "\n"));
+      out.flush();
       return 0;
     }
     if (a.isEmpty() || a.getFirst().equals("help") || a.getFirst().equals("--help")) {
