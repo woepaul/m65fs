@@ -127,6 +127,10 @@ public final class M65fs {
   }
 
   private int dispatch(List<String> a) {
+    if (a.equals(List.of("--version"))) {
+      out.println("m65fs " + version());
+      return 0;
+    }
     if (a.equals(List.of("--list-commands"))) {
       // for scripts that create the m65.COMMAND links (tools/install.sh, tools/build-native.sh)
       COMMANDS.forEach(out::println);
@@ -905,14 +909,31 @@ public final class M65fs {
     return t;
   }
 
-  /** {@code $XDG_CACHE_HOME/m65fs/target} or {@code ~/.cache/m65fs/target}; null without either. */
+  /**
+   * {@code $XDG_CACHE_HOME/m65fs/target}, {@code ~/.cache/m65fs/target} or (Windows)
+   * {@code %LOCALAPPDATA%\m65fs\target}; null without any of them.
+   */
   private Path targetCache() {
-    String xdg = env.get("XDG_CACHE_HOME");
-    if (xdg != null && !xdg.isBlank()) {
-      return Path.of(xdg, "m65fs", "target");
+    for (String[] c : new String[][] {{"XDG_CACHE_HOME", ""}, {"HOME", ".cache"}, {"LOCALAPPDATA", ""}}) {
+      String base = env.get(c[0]);
+      if (base != null && !base.isBlank()) {
+        return c[1].isEmpty() ? Path.of(base, "m65fs", "target") : Path.of(base, c[1], "m65fs", "target");
+      }
     }
-    String home = env.get("HOME");
-    return home == null || home.isBlank() ? null : Path.of(home, ".cache", "m65fs", "target");
+    return null;
+  }
+
+  /** The release version (from the build), e.g. {@code 0.1.0}. */
+  static String version() {
+    try (var in = M65fs.class.getResourceAsStream("/io/github/paw/m65fs/version.properties")) {
+      var p = new java.util.Properties();
+      if (in != null) {
+        p.load(in);
+      }
+      return p.getProperty("version", "unknown");
+    } catch (IOException e) {
+      return "unknown";
+    }
   }
 
   /**

@@ -16,12 +16,12 @@ OUT="$HERE/src/main/resources/io/github/paw/m65fs/blobs"
 command -v acme >/dev/null || { echo "acme (0.97 or newer) not found" >&2; exit 1; }
 mkdir -p "$OUT"
 
-declare -A SIZE=([echo]=256 [load]=1280 [start]=1088)
-for e in echo load start; do
-  (cd "$ASM/ethlets" && acme --cpu m65 -f plain -o "$OUT/ethlet_$e.bin" "$e.a")
-  size=$(stat -c %s "$OUT/ethlet_$e.bin")
-  if [[ $size -ne ${SIZE[$e]} ]]; then
-    echo "ethlet_$e.bin is $size bytes, expected ${SIZE[$e]}" >&2
+for e in echo:256 load:1280 start:1088; do  # name:size (no associative arrays: bash 3.2)
+  name=${e%:*} expected=${e#*:}
+  (cd "$ASM/ethlets" && acme --cpu m65 -f plain -o "$OUT/ethlet_$name.bin" "$name.a")
+  size=$(wc -c < "$OUT/ethlet_$name.bin" | tr -d ' ')
+  if [[ $size -ne $expected ]]; then
+    echo "ethlet_$name.bin is $size bytes, expected $expected" >&2
     exit 1
   fi
 done

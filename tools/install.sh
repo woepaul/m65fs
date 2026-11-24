@@ -19,7 +19,8 @@ else
   "$HERE/tools/build-native.sh"
   install -m 755 "$HERE/target/native/m65" "$DIR/m65"
 fi
-mapfile -t COMMANDS < <("$DIR/m65" --list-commands)
+COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
+while IFS= read -r c; do COMMANDS+=("$c"); done < <("$DIR/m65" --list-commands)
 [[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$DIR/m65 --list-commands gave no commands" >&2; exit 1; }
 for c in "${COMMANDS[@]}"; do
   ln -sf m65 "$DIR/m65.$c"

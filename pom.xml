@@ -10,7 +10,8 @@
   <packaging>jar</packaging>
 
   <name>m65fs</name>
-  <description>Java NIO FileSystemProvider for the MEGA65 SD card over Ethernet (mega65_ftp -e protocol)</description>
+  <description>Tools and a Java NIO file system for the MEGA65 over Ethernet: files on its SD card, starting software</description>
+  <url>https://github.com/woepaul/m65fs</url>
 
   <licenses>
     <license>
@@ -65,6 +66,23 @@
   </dependencies>
 
   <build>
+    <resources>
+      <!-- the version (for "m65 version") is filled in; nothing else, the blobs are binary -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes>
+          <include>io/github/paw/m65fs/version.properties</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>io/github/paw/m65fs/version.properties</exclude>
+        </excludes>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

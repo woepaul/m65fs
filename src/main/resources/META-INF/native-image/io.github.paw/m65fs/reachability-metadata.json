@@ -2,6 +2,9 @@
   "resources": [
     {
       "glob": "io/github/paw/m65fs/blobs/*"
+    },
+    {
+      "glob": "io/github/paw/m65fs/version.properties"
     }
   ]
 }

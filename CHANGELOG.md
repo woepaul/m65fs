@@ -1,8 +1,10 @@
 # Changelog
 
-Changes to m65fs, newest first. Dates are when the work was done.
+Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" into
+"VERSION (date)"; the release on GitHub takes its notes from that section
+(`tools/release-notes.sh`).
 
-## 2026-11-24
+## Unreleased
 
 ### Working directory shared with the MEGA65
 
@@ -66,6 +68,17 @@ without errors.
 - Discovery prefers a wired interface: a MEGA65 heard over WLAN is only taken if no wired
   interface hears it within one beacon period (reading 4 MiB took 4.15 s wired, 4.64 s over
   WLAN). A remembered WLAN address is not reused without checking for a wired one.
+
+### Releases
+
+- GitHub Actions: every push builds and tests (including the image tests with dosfstools and
+  mtools, and a check that the bundled MEGA65 code matches its sources), and builds the
+  native binary for Linux amd64 and aarch64, macOS aarch64 and Windows amd64. A tag `vX.Y.Z`
+  publishes a release with the jar and those four binaries.
+- `m65 --version`.
+- The build scripts run on macOS (bash 3.2) and the native build on Windows (Git Bash), where
+  the commands are `m65.ls.cmd`, ... wrappers around `m65.exe`. On Windows the address cache
+  lives in `%LOCALAPPDATA%\m65fs\target`.
 
 ### Tooling
 

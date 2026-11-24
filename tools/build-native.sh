@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the native m65 binary with GraalVM native-image and links the m65.* commands to it:
 #   target/native/m65, target/native/m65.ls -> m65, m65.cp -> m65, ...
+# On Windows (Git Bash): target/native/m65.exe and m65.ls.cmd, m65.cp.cmd, ... wrappers.
 #
 # GraalVM: $GRAALVM_HOME, else the copy cached in ~/.cache/m65fs (downloaded and checksum-verified
 # on first use, GraalVM Community for JDK 25).
@@ -15,6 +16,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64) PLATFORM=linux-aarch64 ;;
   Darwin-arm64)  PLATFORM=macos-aarch64 ;;
   Darwin-x86_64) PLATFORM=macos-x64 ;;
+  MINGW*|MSYS*|CYGWIN*) PLATFORM=windows-x64 ;;
   *) echo "unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -31,7 +33,8 @@ if [[ -z "${GRAALVM_HOME:-}" ]]; then
     mkdir -p "$CACHE"
     curl -sSfL -o "$CACHE/$F" "$U/$F"
     curl -sSfL -o "$CACHE/$F.sha256" "$U/$F.sha256"
-    (cd "$CACHE" && echo "$(cat "$F.sha256")  $F" | sha256sum -c - >/dev/null)
+    SHA=sha256sum; command -v sha256sum >/dev/null || SHA="shasum -a 256"   # macOS
+    (cd "$CACHE" && echo "$(cat "$F.sha256")  $F" | $SHA -c - >/dev/null)
     tar xzf "$CACHE/$F" -C "$CACHE"
     exec "$0" "$@"
   fi
@@ -48,9 +51,13 @@ OUT="$HERE/target/native"
 mkdir -p "$OUT"
 "$NI" -jar "$JAR" -o "$OUT/m65" -march=compatibility "$@"
 
-# The 6502 blobs must be embedded (META-INF/native-image/.../reachability-metadata.json).
-if command -v python3 >/dev/null; then
-  python3 - "$OUT/m65" "$HERE/src/main/resources/io/github/paw/m65fs/blobs" <<'PY'
+BIN="$OUT/m65"
+[[ $PLATFORM == windows-* ]] && BIN="$OUT/m65.exe"
+
+# The MEGA65 blobs must be embedded (META-INF/native-image/.../reachability-metadata.json).
+PY=python3; command -v python3 >/dev/null || PY=python
+if command -v $PY >/dev/null; then
+  $PY - "$BIN" "$HERE/src/main/resources/io/github/paw/m65fs/blobs" <<'PY'
 import os, sys
 binary = open(sys.argv[1], 'rb').read()
 missing = [f for f in sorted(os.listdir(sys.argv[2]))
@@ -61,9 +68,14 @@ print("== all", len(os.listdir(sys.argv[2])), "blobs embedded")
 PY
 fi
 
-mapfile -t COMMANDS < <("$OUT/m65" --list-commands)
-[[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$OUT/m65 --list-commands gave no commands" >&2; exit 1; }
+COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
+while IFS= read -r c; do COMMANDS+=("${c%$'\r'}"); done < <("$BIN" --list-commands)
+[[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$BIN --list-commands gave no commands" >&2; exit 1; }
 for c in "${COMMANDS[@]}"; do
-  ln -sf m65 "$OUT/m65.$c"
+  if [[ $PLATFORM == windows-* ]]; then
+    printf '@"%%~dp0m65.exe" %s %%*\r\n' "$c" > "$OUT/m65.$c.cmd"   # no symbolic links on Windows
+  else
+    ln -sf m65 "$OUT/m65.$c"
+  fi
 done
-echo "== done: $OUT/m65 and m65.{$(IFS=,; echo "${COMMANDS[*]}")}"
+echo "== done: $BIN and m65.{$(IFS=,; echo "${COMMANDS[*]}")}"

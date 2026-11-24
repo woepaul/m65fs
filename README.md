@@ -1,5 +1,7 @@
 # m65fs
 
+[![CI](https://github.com/woepaul/m65fs/actions/workflows/ci.yml/badge.svg)](https://github.com/woepaul/m65fs/actions/workflows/ci.yml)
+
 Tools and a Java library for working with a [MEGA65](https://mega65.org) over Ethernet:
 manage the files on its SD card and start software on it from your computer. You don't need
 a card reader, and nothing has to be installed on the MEGA65. m65fs uses the hypervisor's
@@ -48,6 +50,26 @@ try (var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://
 
 The library is pure Java 25 with no dependencies; the native binary is optional. It also
 works on SD card image files. Everything has been tested on real hardware.
+
+## Installation
+
+**From a [release](https://github.com/woepaul/m65fs/releases):** native binaries, no Java
+needed:
+
+| Platform | Archive | Contents |
+|---|---|---|
+| Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `m65` and the `m65.*` links |
+| macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `m65` and the `m65.*` links |
+| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `m65.exe` and `m65.ls.cmd`, `m65.cp.cmd`, … |
+
+Unpack it and put the directory on the `PATH`. On macOS the binary isn't signed; if it is
+blocked, `xattr -d com.apple.quarantine m65` allows it. `m65 --version` shows the version.
+
+**The jar** (`m65fs-VERSION.jar`, on every platform with Java 25): `java -jar m65fs-VERSION.jar
+ls /` runs `m65.ls /`, and so on. It is also the library.
+
+**From source:** `tools/install.sh` builds the native binary and installs it with its links into
+`~/.local/bin` (`--jvm`: without GraalVM, running the jar).
 
 ## What you need
 
@@ -411,6 +433,19 @@ changes something needs its own opt-in flag:
 `-Dm65.target=fe80::…%if` skips discovery. The write tests stay inside the given top-level
 directory, which must already exist. They check that the FAT outside it is byte-identical
 afterwards.
+
+### Releasing
+
+GitHub Actions build and test every push (`.github/workflows/ci.yml`): the offline tests, the
+bundled MEGA65 code against its sources, and the native binary on all four platforms. A
+release is a tag:
+
+1. In `CHANGELOG.md`, rename `## Unreleased` to `## X.Y.Z (date)` and commit.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+`.github/workflows/release.yml` then builds the jar and the four native binaries with that
+version and publishes them as a GitHub release, with the changelog section as release notes.
+It refuses to run if the changelog has no section for the version.
 
 ### Blobs
 

@@ -1,0 +1,71 @@
+# Builds the native m65 binary on every release platform and smoke-tests it. Used by ci.yml
+# (just build and test) and release.yml (with a version, packaged and uploaded).
+name: Native binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version (empty = keep the version in pom.xml, don't package)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: native (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    platform: linux-amd64 }
+          - { os: ubuntu-24.04-arm, platform: linux-aarch64 }
+          - { os: macos-latest,     platform: macos-aarch64 }
+          - { os: windows-latest,   platform: windows-amd64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "25"
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: MSVC environment for native-image
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set the release version
+        if: inputs.version != ''
+        run: ./mvnw -B -q versions:set -DnewVersion="${{ inputs.version }}" -DgenerateBackupPoms=false
+
+      - name: Build
+        run: tools/build-native.sh
+
+      - name: Smoke test
+        run: |
+          bin=target/native/m65; [[ -f $bin.exe ]] && bin=$bin.exe
+          "$bin" --version
+          "$bin" --list-commands
+          "$bin" help > /dev/null
+          ls target/native
+
+      - name: Package
+        if: inputs.version != ''
+        run: tools/package-release.sh "${{ inputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.version != ''
+        with:
+          name: m65-${{ matrix.platform }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.zip
+          if-no-files-found: error

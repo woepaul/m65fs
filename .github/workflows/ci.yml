@@ -1,0 +1,36 @@
+# Every push and pull request: build, all offline tests, the MEGA65 code against its sources,
+# and the native binary on every release platform.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Tools for the image tests and the MEGA65 code
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dosfstools mtools acme
+
+      - name: The bundled MEGA65 code matches its sources
+        run: tools/build-blobs.sh && git diff --exit-code src/main/resources
+
+      - name: Build and test
+        run: ./mvnw -B verify
+
+  native:
+    uses: ./.github/workflows/native.yml
