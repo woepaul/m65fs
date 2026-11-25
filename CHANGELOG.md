@@ -4,6 +4,14 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- `m65.tree -L LEVEL` is fast now: it reads only the levels it shows. Before, it read the whole
+  card (for the directory totals) and only cut the output, so `-L 1` took as long as a full
+  tree (on a test card: 4 instead of 196 requests to the MEGA65). Directories whose content is
+  cut off by `-L` therefore show no totals, and the summary counts what was read, e.g.
+  `6 directories, 23 files, 6.3 MiB (to level 1)`. Without `-L` the output is unchanged.
+
 ## 0.1.3 (2026-11-25)
 
 - Progress for large transfers. `m65.cp -v` prints `'src' -> 'dst'` before copying (not after),

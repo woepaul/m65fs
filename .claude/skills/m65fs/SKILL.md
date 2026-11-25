@@ -65,7 +65,7 @@ and the computer needs IPv6 on the same network segment.
 | Tool | Does | Changes the card |
 |---|---|---|
 | `m65.ls [-lRd] [PATH…]` | Names (default: the working directory); `-l` adds type, size, time and `[fragmented]`; `-R` recursive with `DIR:` headers | no |
-| `m65.tree [-d] [-L LEVEL] [DIR]` | Tree view like tree(1): sizes and dates of files, total size and file count of each directory, `[fragmented]` marks, and a summary line (with free space for `/`). `-d` directories only, `-L` depth. A whole card takes about 5 s | no |
+| `m65.tree [-d] [-L LEVEL] [DIR]` | Tree view like tree(1): sizes and dates of files, total size and file count of each directory, `[fragmented]` marks, and a summary line (with free space for `/`). `-d` directories only, `-L` depth: reads only the levels shown (fast), so directories cut off by it show no totals and the summary says `(to level N)`. A whole card takes about 5 s | no |
 | `m65.cd [DIR]` | Change the working directory (`/` without DIR); the same as `CHDIR "DIR",U12` in BASIC | no |
 | `m65.pwd` | Print the working directory | no |
 | `m65.cat FILE…` | Print files | no |

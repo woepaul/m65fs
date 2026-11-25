@@ -308,11 +308,20 @@ public final class M65fs {
     }
   }
 
-  /** A file or directory for {@code tree}, with the totals of everything below it. */
+  /**
+   * A file or directory for {@code tree}, with the totals of everything read below it;
+   * {@code complete}: the whole subtree was read (not cut off by {@code -L}), so the totals are
+   * those of the directory.
+   */
   private record Node(String name, boolean dir, long size, String date, boolean fragmented, List<Node> children,
-      long totalSize, int files, int dirs) {}
+      long totalSize, int files, int dirs, boolean complete) {}
 
-  /** {@code tree [-d] [-L LEVEL] [DIR]}: like tree(1), with sizes, dates and directory totals. */
+  /**
+   * {@code tree [-d] [-L LEVEL] [DIR]}: like tree(1), with sizes, dates and directory totals.
+   * With {@code -L} only the levels shown are read (each directory costs a round trip to the
+   * card), so directories whose content is cut off show no totals and the summary counts what
+   * was read.
+   */
   private int tree(List<String> a) throws IOException {
     String level = option(a, "-L");
     int maxDepth = level == null ? Integer.MAX_VALUE : Integer.parseInt(level);
@@ -328,7 +337,7 @@ public final class M65fs {
       if (!Files.isDirectory(root)) {
         throw new Failure("'" + dir + "': Not a directory");
       }
-      Node top = node(root, "");
+      Node top = node(root, "", 0, maxDepth);
       List<String[]> rows = new ArrayList<>();
       treeRows(top, "", 1, maxDepth, dirsOnly, rows);
       int width = Math.min(72, rows.stream().mapToInt(r -> r[0].length()).max().orElse(0)) + 2;
@@ -343,17 +352,22 @@ public final class M65fs {
         free = String.format(", volume '%s' %s free of %s", store.name(), humanSize(store.getUnallocatedSpace()),
             humanSize(store.getTotalSpace()));
       }
-      out.printf("%d director%s, %d file%s, %s%s%n", top.dirs(), top.dirs() == 1 ? "y" : "ies", top.files(),
-          top.files() == 1 ? "" : "s", humanSize(top.totalSize()), free);
+      out.printf("%d director%s, %d file%s, %s%s%s%n", top.dirs(), top.dirs() == 1 ? "y" : "ies", top.files(),
+          top.files() == 1 ? "" : "s", humanSize(top.totalSize()),
+          top.complete() ? "" : " (to level " + maxDepth + ")", free);
       return 0;
     }
   }
 
-  private Node node(Path p, String name) throws IOException {
+  /** Reads {@code p} (at {@code depth}, the top is 0) and, above {@code maxDepth}, its content. */
+  private Node node(Path p, String name, int depth, int maxDepth) throws IOException {
     var at = Files.readAttributes(p, Mega65FileAttributes.class);
     String date = TIME.format(at.lastModifiedTime().toInstant().atZone(ZoneId.systemDefault()));
     if (!at.isDirectory()) {
-      return new Node(name, false, at.size(), date, !at.isContiguous(), List.of(), at.size(), 1, 0);
+      return new Node(name, false, at.size(), date, !at.isContiguous(), List.of(), at.size(), 1, 0, true);
+    }
+    if (depth >= maxDepth) {
+      return new Node(name, true, 0, date, false, List.of(), 0, 0, 0, false);
     }
     List<Path> list;
     try (Stream<Path> s = Files.list(p)) {
@@ -363,15 +377,17 @@ public final class M65fs {
     long total = 0;
     int files = 0;
     int dirs = 0;
+    boolean complete = true;
     for (Path c : list) {
-      Node n = node(c, c.getFileName().toString());
+      Node n = node(c, c.getFileName().toString(), depth + 1, maxDepth);
+      complete &= n.complete();
       children.add(n);
       total += n.totalSize();
       files += n.files();
       dirs += n.dirs() + (n.dir() ? 1 : 0);
     }
     children.sort(Comparator.comparing((Node n) -> !n.dir()).thenComparing(n -> n.name().toLowerCase(Locale.ROOT)));
-    return new Node(name, true, 0, date, false, children, total, files, dirs);
+    return new Node(name, true, 0, date, false, children, total, files, dirs, complete);
   }
 
   private static void treeRows(Node dir, String prefix, int depth, int maxDepth, boolean dirsOnly,
@@ -381,8 +397,8 @@ public final class M65fs {
       Node n = shown.get(i);
       boolean last = i == shown.size() - 1;
       String label = prefix + (last ? "└── " : "├── ") + n.name() + (n.dir() ? "/" : "");
-      String info = n.dir()
-          ? humanSize(n.totalSize()) + " in " + n.files() + " file" + (n.files() == 1 ? "" : "s")
+      String info = n.dir() && !n.complete() ? ""
+          : n.dir() ? humanSize(n.totalSize()) + " in " + n.files() + " file" + (n.files() == 1 ? "" : "s")
           : humanSize(n.size()) + "   " + n.date() + (n.fragmented() ? "   [fragmented]" : "");
       rows.add(new String[] {label, info});
       if (n.dir() && depth < maxDepth) {

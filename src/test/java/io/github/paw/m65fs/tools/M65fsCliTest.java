@@ -192,14 +192,22 @@ class M65fsCliTest {
     assertEquals(0, m65("tree", "-d", "-L", "2", "/my game"));
     assertEquals("""
         /My Game
-        ├── disks/      804.9 KiB in 2 files
-        │   └── extra/  4.9 KiB in 1 file
+        ├── disks/
+        │   └── extra/
         └── empty/      0 B in 0 files
 
-        3 directories, 3 files, 804.9 KiB
+        3 directories, 2 files, 800.0 KiB (to level 2)
         """, out());
-    assertEquals(0, m65("tree", "-d", "-L", "1", "/my game"));
-    assertTrue(out().startsWith("/My Game\n├── disks/  804.9 KiB in 2 files\n└── empty/  0 B in 0 files\n"), out());
+    // -L reads only the levels shown: no totals for directories whose content is cut off
+    assertEquals(0, m65("tree", "-L", "1", "/my game"));
+    assertEquals("""
+        /My Game
+        ├── disks/
+        ├── empty/
+        └── readme.txt  13 B   DATE
+
+        2 directories, 1 file, 13 B (to level 1)
+        """, out().replaceAll("\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d", "DATE"));
     assertEquals(1, m65("tree", "/my game/readme.txt"));
   }
 
