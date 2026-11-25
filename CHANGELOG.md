@@ -27,6 +27,18 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   switch to a 40-column C64 screen for a moment). The hello answer carries the helper's
   version, so only a helper of the same m65fs version is reused; otherwise, or if nothing
   answers within 150 ms, the tool triggers as before.
+- New `m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...`: moves the files of a directory with
+  more than MAX (250) files into subdirectories by name, e.g. `0-C`, `D-G`, `R`, and by the
+  next letter where one letter has too many (`Sa-Sd`); as few groups as MAX allows, as evenly
+  filled as the names allow. For cores whose file browser loads only so many entries (the C64
+  core warns above about 300 to 600). `-r` handles every directory below DIR, `--dry-run`
+  only shows the plan. Works on the card (`m65:/DIR`, `/DIR`, one session, only directory
+  entries change: `-r` over 11,000 files plans in about 8 s) and on local directories.
+- Faster tree walks on the card: path lookups read the directories along the path in
+  cache-sized pieces. Before, a directory larger than the sector cache's read-ahead was read
+  from the card again for every lookup, so walking a large tree with `Files.walk` (or
+  anything that looks up many entries in a big directory) took minutes instead of seconds
+  (11,000 files: 116 s, now 8 s).
 - A busy MEGA65 is no longer taken over. So far a tool always triggered the MEGA65 if the
   helper did not answer it, which ended another command's session (from a second terminal or
   another computer) in the middle of its work. Now the helper answers "busy", and the tool

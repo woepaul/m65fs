@@ -291,4 +291,84 @@ class M65fsCliTest {
     assertEquals(80, both.length(), both);
     assertTrue(both.matches("\\.\\.\\..*game\\.prg -> \\.\\.\\..*/game\\.prg"), both);
   }
+
+  @Test
+  void dsplitMovesFilesIntoSubdirectoriesByName() throws IOException {
+    Path local = tmp.resolve("many");
+    Files.createDirectories(local);
+    for (String c : List.of("Alpha", "Beta", "Gamma", "Delta", "Rho", "Sigma", "Tau", "Zeta")) {
+      for (int i = 0; i < 3; i++) {
+        Files.writeString(local.resolve(c + " " + i + ".prg"), c);
+      }
+    }
+    assertEquals(0, m65("cp", "-r", local.toString(), "m65:/MANY"), err.toString());
+    assertEquals(0, m65("mkdir", "/MANY/keep"));
+    out();
+
+    assertEquals(0, m65("dsplit", "-m", "10", "--dry-run", "/MANY"), err.toString());
+    assertTrue(out().startsWith("m65:/MANY: 24 files into 3 directories (dry run, nothing changed)\n  A-D"), out());
+    assertEquals(0, m65("ls", "/MANY"));
+    assertEquals(25, out().lines().count(), "dry run: nothing moved");
+
+    assertEquals(0, m65("dsplit", "-m", "10", "/MANY"), err.toString());
+    out();
+    assertEquals(0, m65("ls", "/MANY"));
+    assertEquals(List.of("A-D", "G-S", "keep", "T-Z"), out().lines().sorted(String.CASE_INSENSITIVE_ORDER).toList());
+    assertEquals(0, m65("ls", "/MANY/G-S"));
+    assertEquals(9, out().lines().count());
+    assertEquals(0, m65("dsplit", "-m", "10", "/MANY"));
+    assertEquals("m65:/MANY: 0 files, nothing to split\n", out());
+    img.fsck();
+  }
+
+  @Test
+  void dsplitRecursiveOnlyTouchesDirectoriesAboveMax() throws IOException {
+    Path local = tmp.resolve("tree");
+    Files.createDirectories(local.resolve("big"));
+    Files.createDirectories(local.resolve("small"));
+    for (int i = 0; i < 12; i++) {
+      Files.writeString(local.resolve("big").resolve((char) ('a' + i) + ".prg"), "x");
+    }
+    Files.writeString(local.resolve("small").resolve("x.prg"), "x");
+    assertEquals(0, m65("cp", "-r", local.toString(), "m65:/T"), err.toString());
+    out();
+    assertEquals(0, m65("dsplit", "-r", "-m", "5", "/T"), err.toString());
+    String o = out();
+    assertTrue(o.startsWith("m65:/T/big: 12 files into 3 directories\n"), o);
+    assertTrue(!o.contains("small"), o);
+    assertEquals(0, m65("ls", "/T/big"));
+    assertEquals(List.of("A-D", "E-H", "I-L"), out().lines().toList());
+    img.fsck();
+  }
+
+  @Test
+  void dsplitRefusesWhenANewDirectoryNameIsTaken() throws IOException {
+    Path local = tmp.resolve("clash");
+    Files.createDirectories(local);
+    for (String n : List.of("a", "b", "c", "d")) {
+      Files.writeString(local.resolve(n + ".prg"), "x");
+    }
+    Files.createDirectories(local.resolve("A-B")); // the name of the first group
+    assertEquals(0, m65("cp", "-r", local.toString(), "m65:/C"), err.toString());
+    out();
+    assertEquals(1, m65("dsplit", "-m", "2", "/C"));
+    assertTrue(err.toString().contains("exists already; nothing moved"), err.toString());
+    assertEquals(0, m65("ls", "/C"));
+    assertEquals(5, out().lines().count());
+  }
+
+  @Test
+  void dsplitWorksOnALocalDirectoryWithoutTheCard() throws IOException {
+    Path local = tmp.resolve("local");
+    Files.createDirectories(local);
+    for (String n : List.of("apple", "banana", "cherry", "date", "elder", "fig")) {
+      Files.writeString(local.resolve(n + ".prg"), n);
+    }
+    assertEquals(0, m65("dsplit", "-m", "3", local.toString()), err.toString());
+    assertTrue(out().startsWith(local.toAbsolutePath() + ": 6 files into 2 directories\n"));
+    try (var l = Files.list(local)) {
+      assertEquals(List.of("A-C", "D-F"), l.map(p -> p.getFileName().toString()).sorted().toList());
+    }
+    assertEquals("cherry", Files.readString(local.resolve("A-C/cherry.prg")));
+  }
 }

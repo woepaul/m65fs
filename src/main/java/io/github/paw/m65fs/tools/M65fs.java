@@ -65,7 +65,7 @@ public final class M65fs {
   private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
   /** The commands; each has a link {@code m65.COMMAND} (bin/, and made by the install scripts). */
   static final List<String> COMMANDS = List.of("ls", "tree", "cd", "pwd", "cp", "mv", "rm", "mkdir", "cat",
-      "stat", "df", "defrag", "boot", "run", "reset", "mount", "peek", "discover");
+      "stat", "df", "defrag", "dsplit", "boot", "run", "reset", "mount", "peek", "discover");
 
   private final PrintStream out;
   private final PrintStream err;
@@ -186,6 +186,7 @@ public final class M65fs {
         case "mv" -> mv(a);
         case "rm" -> rm(a);
         case "mkdir" -> mkdir(a);
+        case "dsplit" -> dsplit(a);
         case "cat" -> cat(a);
         case "stat" -> stat(a);
         case "df" -> df(a);
@@ -751,6 +752,154 @@ public final class M65fs {
     }
   }
 
+  /** Default of {@code m65.dsplit -m}: well below the C64 core's limit (about 300 to 600 entries). */
+  static final int SPLIT_MAX = 250;
+
+  /**
+   * {@code dsplit [-rv] [-m MAX] [--dry-run] DIR...}: moves the files of each DIR with more than
+   * MAX files into subdirectories by name ({@link Splitter}); with {@code -r} also every
+   * directory below. Subdirectories that are there already stay. Only directory entries change
+   * (one session), so it is quick. DIR is on the card ({@code m65:/DIR} or {@code /DIR}), or
+   * local if a local directory of that name exists (no MEGA65 needed then).
+   */
+  private int dsplit(List<String> a) throws IOException {
+    boolean dry = a.remove("--dry-run");
+    String m = option(a, "-m");
+    int max;
+    try {
+      max = m == null ? SPLIT_MAX : Integer.parseInt(m);
+    } catch (NumberFormatException e) {
+      throw new Failure("-m needs a number: '" + m + "'");
+    }
+    if (max < 2) {
+      throw new Failure("-m needs 2 or more");
+    }
+    Set<Character> f = flags(a, "rv");
+    if (a.isEmpty()) {
+      throw new Failure("missing directory operand");
+    }
+    boolean needCard = a.stream().anyMatch(d -> !isLocalDir(d));
+    try (var fs = needCard ? openCard(dry) : null) {
+      // all directories to look at first: the new subdirectories are not split again
+      List<Path> dirs = new ArrayList<>();
+      for (String d : a) {
+        Path dir = isLocalDir(d) ? Path.of(d) : fs.getPath(cardPath(d));
+        if (!Files.isDirectory(dir)) {
+          warn("'" + d + "': Not a directory");
+          continue;
+        }
+        if (f.contains('r')) {
+          addDirectories(dir, dirs);
+        } else {
+          dirs.add(dir);
+        }
+      }
+      int split = 0;
+      for (Path dir : dirs) {
+        List<Path> entries;
+        try (Stream<Path> l = Files.list(dir)) {
+          entries = l.toList();
+        }
+        List<String> files = new ArrayList<>();
+        Set<String> taken = new HashSet<>();
+        for (Path e : entries) {
+          String n = name(e);
+          taken.add(n.toLowerCase(Locale.ROOT));
+          if (Files.isRegularFile(e)) {
+            files.add(n);
+          }
+        }
+        if (files.size() <= max) {
+          if (!f.contains('r')) {
+            out.println(shown(dir) + ": " + files.size() + " files, nothing to split");
+          }
+          continue;
+        }
+        List<Splitter.Group> plan = Splitter.plan(files, max);
+        for (Splitter.Group g : plan) {
+          if (taken.contains(g.name().toLowerCase(Locale.ROOT))) {
+            throw new Failure("'" + shown(dir.resolve(g.name())) + "' exists already; nothing moved in "
+                + shown(dir));
+          }
+        }
+        out.println(shown(dir) + ": " + files.size() + " files into " + plan.size() + " directories"
+            + (dry ? " (dry run, nothing changed)" : ""));
+        for (Splitter.Group g : plan) {
+          out.printf("  %-8s %4d files  (%s ... %s)%n", g.name(), g.files().size(), g.files().getFirst(),
+              g.files().getLast());
+        }
+        if (!dry) {
+          splitInto(dir, plan, f.contains('v'));
+        }
+        split++;
+      }
+      if (f.contains('r') && split == 0) {
+        out.println("no directory with more than " + max + " files");
+      }
+      return 0;
+    }
+  }
+
+  /**
+   * {@code dir} and every directory below it (with Files.list: Files.walk reads the attributes of
+   * every entry in a way that takes minutes on a large card).
+   */
+  private static void addDirectories(Path dir, List<Path> dirs) throws IOException {
+    dirs.add(dir);
+    List<Path> children;
+    try (Stream<Path> l = Files.list(dir)) {
+      children = l.toList();
+    }
+    for (Path c : children) {
+      if (Files.isDirectory(c)) {
+        addDirectories(c, dirs);
+      }
+    }
+  }
+
+  /** A local directory that exists, and is not meant for the card ({@code m65:...}). */
+  private static boolean isLocalDir(String d) {
+    return !isCard(d) && Files.isDirectory(Path.of(d));
+  }
+
+  /** {@code m65:/DIR} on the card, the absolute path for a local one. */
+  private static String shown(Path p) {
+    return p.getFileSystem() instanceof Mega65FileSystem ? CARD_PREFIX + p.toAbsolutePath()
+        : p.toAbsolutePath().normalize().toString();
+  }
+
+  /** Creates the plan's subdirectories and moves the files; Ctrl-C says how far it got. */
+  private void splitInto(Path dir, List<Splitter.Group> plan, boolean verbose) throws IOException {
+    Mega65FileSystem card = dir.getFileSystem() instanceof Mega65FileSystem m ? m : null;
+    int total = plan.stream().mapToInt(g -> g.files().size()).sum();
+    int[] moved = {0};
+    Runnable report = () -> {
+      err.println(prog + ": interrupted in " + shown(dir) + " after " + moved[0] + " of " + total
+          + " files; the others are still in it");
+      err.flush();
+    };
+    Interruption.running(report);
+    try {
+      for (Splitter.Group g : plan) {
+        Path sub = dir.resolve(g.name());
+        if (card != null) {
+          card.showOnMega65(INDENT + sub.toAbsolutePath() + ": " + g.files().size() + " files",
+              Mega65FileSystem.LineKind.INFO, false, INDENT.length());
+        }
+        Files.createDirectory(sub);
+        for (String n : g.files()) {
+          Files.move(dir.resolve(n), sub.resolve(n));
+          moved[0]++;
+          if (verbose) {
+            out.println("renamed '" + dir.resolve(n) + "' -> '" + sub.resolve(n) + "'");
+          }
+        }
+      }
+    } finally {
+      Interruption.done(report);
+    }
+  }
+
   private int rm(List<String> a) throws IOException {
     Set<Character> f = flags(a, "rRfv");
     boolean recursive = f.contains('r') || f.contains('R');
@@ -1264,6 +1413,7 @@ public final class M65fs {
       case "mv" -> "m65.mv [-nfv] SOURCE... DEST";
       case "rm" -> "m65.rm [-rRfv] PATH...";
       case "mkdir" -> "m65.mkdir [-pv] DIR...";
+      case "dsplit" -> "m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...";
       case "cat" -> "m65.cat FILE...";
       case "stat" -> "m65.stat PATH...";
       case "df" -> "m65.df [--contiguous]";
@@ -1300,6 +1450,13 @@ public final class M65fs {
           m65.cat FILE...                     print files
           m65.stat PATH...                    details: 8.3 name, start sector, contiguous
           m65.df [--contiguous]               size and free space (+ largest free run, slow)
+          m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...
+                                              files of DIR into subdirectories of at most
+                                              MAX (250) by name: 0-C, D-G, R, Sa-Sd ... (for
+                                              cores that load only so many entries); -r
+                                              every directory below DIR with more than MAX;
+                                              on the card (m65:/DIR, /DIR) or a local
+                                              directory (one that exists here)
           m65.defrag [--fix] [DIR]            list fragmented files; --fix defragments them
 
         machine

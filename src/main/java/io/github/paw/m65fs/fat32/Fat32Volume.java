@@ -700,6 +700,9 @@ public final class Fat32Volume implements AutoCloseable {
     final List<Extent> extents;
     byte[] raw;
 
+    /** Directory reads per call: small enough for the sector cache (CachingBlockDevice). */
+    static final int DIR_READ_SECTORS = 8;
+
     Dir(int firstCluster) throws IOException {
       this.firstCluster = firstCluster;
       this.extents = new ArrayList<>(fat.extents(firstCluster));
@@ -709,7 +712,17 @@ public final class Fat32Volume implements AutoCloseable {
         throw new FileSystemException(null, null, "directory larger than the FAT limit of 65536 entries");
       }
       ByteBuffer b = ByteBuffer.allocate((int) bytes);
-      readClusters(extents, 0, b, (int) bytes);
+      // in small pieces: the sector cache keeps only small reads (large ones are file data that
+      // would push metadata out), and every path lookup reads the directories along the path
+      for (Extent ext : extents) {
+        long lba = clusterLba(ext.first());
+        long sectors = (long) ext.length() * boot.sectorsPerCluster();
+        for (long done = 0; done < sectors; done += DIR_READ_SECTORS) {
+          int n = (int) Math.min(DIR_READ_SECTORS, sectors - done);
+          dev.read(lba + done, b.slice(b.position(), n * SECTOR));
+          b.position(b.position() + n * SECTOR);
+        }
+      }
       this.raw = b.array();
     }
 

@@ -10,7 +10,8 @@ those of mega65-tools' `mega65_ftp -e` and `etherload`, reduced to what m65fs ne
 
 - **Command line tools in the style of the Unix core utilities:** `m65.ls`, `m65.tree`,
   `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
-  `m65.df`. They copy single files or whole directory trees in either direction, and they're
+  `m65.df`, plus `m65.dsplit` for directories with more files than a core's file browser
+  loads. They copy single files or whole directory trees in either direction, and they're
   built as one native binary (GraalVM). A command such as `m65.ls /` takes about 0.1 s,
   writing runs at about 450 KiB/s and reading at about 950 KiB/s (see `CHANGELOG.md`).
 - **A working directory shared with BASIC:** `m65.cd /GAMES` is the same as
@@ -255,10 +256,11 @@ m65.boot game.d81                    # copy to the card root, mount, reset, run 
 m65.run demo.prg                     # load into memory and start ($0801 C64 / $2001 MEGA65)
 m65.reset                            # MEGA65 mode, drive 0 detached
 m65.defrag [--fix]                   # report / fix fragmented files
+m65.dsplit -r --dry-run /c64/prg     # plan: directories with > 250 files into subdirectories
 ```
 
 The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`,
-`m65.df`, `m65.defrag`, `m65.boot`, `m65.run`, `m65.reset`, `m65.mount`, `m65.peek` and
+`m65.df`, `m65.defrag`, `m65.dsplit`, `m65.boot`, `m65.run`, `m65.reset`, `m65.mount`, `m65.peek` and
 `m65.discover`. Each takes `--help`, and `m65 help` lists them all.
 
 - **`m65.cp`** has GNU cp semantics: `-r` for directories, several sources into a directory,
@@ -337,6 +339,35 @@ List<Defragmenter.Result> results = Defragmenter.defragment(fs, report.paths(), 
 ```
 
 `Fat32Volume.defragment(entry)` does one file at the lower level.
+
+## Directories with too many files for a core
+
+The file browsers of cores have a limit: the C64 core, for example, warns about a directory
+with more files than it can load (about 300 to 600 entries). `m65.dsplit` moves the files of
+such a directory into subdirectories by name, as few as the limit (`-m`, default 250) allows
+and as evenly filled as the names allow. Where one letter alone has too many files, it goes
+by the next letter:
+
+```sh
+m65.dsplit -r --dry-run /c64/prg     # the plan for every directory below /c64/prg
+m65.dsplit -r /c64/prg               # do it
+m65.dsplit ~/c64/prg                 # a local directory (no MEGA65 needed)
+```
+
+```
+m65:/c64/prg/S: 1219 files into 6 directories
+  S0-Sg     210 files  (S-Skat (1984)(Jorn Scheller)(de)[cr ASS].prg ... SGA - Super Galaxy ...)
+  Sh-Sl     214 files  (Shadow Skimmer (1987)(The Edge Software)[cr Triad][t +1 Triad].prg ...)
+  Sm-So     131 files  (Small Town Mission (1985)(Multisoft)(de).prg ... Southern Belle ...)
+  Sp        221 files  (Space (1983)(Tronic Verlag)(de).prg ... Spy's Demise 2 ...)
+  Sq-St     231 files  (Sqij! (1986)(The Power House).prg ... Stygian Tombs ...)
+  Su-Sz     212 files  (Sub Attack (1987)(Compute!).prg ... Szuperjatek! (19xx)(-)(hu).prg)
+```
+
+Subdirectories that are already there stay. On the card only directory entries change, in one
+session (8,000 files in about 1.5 minutes); if a new directory's name is taken, nothing is
+moved. A directory is a path on the card (`m65:/DIR` or `/DIR`), or local if a local directory
+of that name exists.
 
 ## Booting disks and running programs
 

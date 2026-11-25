@@ -14,7 +14,7 @@ cannot use fragmented files).
 
 The m65 tools follow the Unix core utilities: `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`,
 `m65.cp`, `m65.mv`, `m65.rm`, `m65.mkdir`, `m65.cat`, `m65.stat`, `m65.df`, plus `m65.boot`,
-`m65.run`, `m65.reset`, `m65.mount`, `m65.peek`, `m65.discover` and `m65.defrag`. Each takes `--help`; `m65 help`
+`m65.run`, `m65.reset`, `m65.mount`, `m65.peek`, `m65.discover`, `m65.defrag` and `m65.dsplit`. Each takes `--help`; `m65 help`
 lists all of them.
 
 **Finding them:** use `m65.ls` etc. if they are on the PATH (`command -v m65.ls`). Otherwise
@@ -77,6 +77,7 @@ and the computer needs IPv6 on the same network segment.
 | `m65.rm [-rRfv] PATH…` | Delete; `-r` directories with contents, `-f` ignore missing; refuses `/` | yes |
 | `m65.mkdir [-pv] DIR…` | Create directories | yes |
 | `m65.defrag [--fix] [DIR]` | List fragmented files; `--fix` defragments them | only with `--fix` |
+| `m65.dsplit [-rv] [-m MAX] [--dry-run] DIR…` | Moves the files of a directory with more than MAX (250) files into subdirectories by name (`0-C`, `D-G`, `Sa-Sd`, …; as few and as even as possible), for cores whose file browser loads only so many entries (C64 core: about 300 to 600). `-r`: every directory below DIR; `--dry-run`: only the plan. Card (`m65:/DIR`, `/DIR`) or a local directory that exists. Only directory entries change: quick | yes (not with `--dry-run`; local: no MEGA65) |
 
 Files written to the card are always contiguous. An overwrite goes to free clusters first and
 only then replaces the old file, so it needs free space of the file's size; if that doesn't fit
@@ -122,7 +123,7 @@ line, or a message on stderr; defrag tells how many files it finished).
 
 1. **`m65.cp` and `m65.mv` overwrite like cp/mv.** When the target might exist and the user
    didn't ask to replace it, check first (`m65.ls`/`m65.stat`) or use `-n`. Ask before
-   overwriting, `m65.rm`, or `m65.defrag --fix`. `m65.ls`, `m65.cat`, `m65.stat`, `m65.df`,
+   overwriting, `m65.rm`, `m65.defrag --fix` or `m65.dsplit` (show its `--dry-run` plan first). `m65.ls`, `m65.cat`, `m65.stat`, `m65.df`,
    `m65.defrag` (report) and copying *from* the card are read-only for the card.
 2. **Stay within what was asked.** Write only the files and directories the request names. For
    experiments or tests, use a dedicated top-level test directory agreed with the user.
@@ -145,6 +146,7 @@ line, or a message on stderr; defrag tells how many files it finished).
 | "Run this program, it needs its data disk" | `m65.cp data.d81 m65:/` then `m65.run --mount m65:/DATA.D81 game.prg` |
 | "Go into my games folder" / "where am I?" | `m65.cd /GAMES` (BASIC's `DIR U12` then lists it too) / `m65.pwd` |
 | "Is anything fragmented?" | `m65.defrag`; after confirmation `m65.defrag --fix` |
+| "The core says a directory has too many files" | `m65.dsplit -r --dry-run DIR`, show the plan; after confirmation the same without `--dry-run` |
 | "Free space?" | `m65.df` |
 | "Eject the disk / give me my machine back" | `m65.reset` |
 | Work on an image file from a card reader | `M65_IMAGE=sdcard.img m65.ls /` etc. (the image must not be mounted by the OS at the same time) |
