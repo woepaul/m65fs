@@ -118,7 +118,7 @@ public final class Defrag {
           public void starting(Path path, long size) {
             // a file is read and written once: progress counts both against twice its size
             long base = fs.bytesRead() + fs.bytesWritten();
-            show("defrag " + path, Mega65FileSystem.LineKind.INFO, false);
+            show(M65fs.INDENT + path, Mega65FileSystem.LineKind.INFO, false);
             line = new CopyLine(out, "  " + path, live, () -> fs.bytesRead() + fs.bytesWritten() - base, 2 * size)
                 .interruptedSuffix(": interrupted");
           }
@@ -126,13 +126,13 @@ public final class Defrag {
           @Override
           public void deferred(Path path) {
             line.close(": no contiguous space yet, retried at the end");
-            show("defrag " + path + ": no space yet, retried at the end", Mega65FileSystem.LineKind.INFO, true);
+            show(M65fs.INDENT + path + ": no space yet, retried at the end", Mega65FileSystem.LineKind.INFO, true);
           }
 
           @Override
           public void finished(Defragmenter.Result r) {
             line.close(": " + r.outcomeText());
-            show("defrag " + r.path() + ": " + r.outcomeText(), r.outcome() == Defragmenter.Outcome.DEFRAGMENTED
+            show(M65fs.INDENT + r.path() + ": " + r.outcomeText(), r.outcome() == Defragmenter.Outcome.DEFRAGMENTED
                 ? Mega65FileSystem.LineKind.INFO : Mega65FileSystem.LineKind.ERROR, true);
             finished[0]++;
           }
@@ -140,7 +140,7 @@ public final class Defrag {
           /** The same on the MEGA65's screen. */
           private void show(String text, Mega65FileSystem.LineKind kind, boolean replace) {
             try {
-              fs.showOnMega65(text, kind, replace, "defrag ".length());
+              fs.showOnMega65(text, kind, replace, M65fs.INDENT.length());
             } catch (IOException e) {
               throw new java.io.UncheckedIOException(e);
             }

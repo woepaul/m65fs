@@ -115,6 +115,15 @@ title is still in screen memory, the log rows (screen and colour RAM) and the ne
 set up again. (The Ethernet trigger itself switches the VIC to a 40-column C64 screen,
 `task_set_c64_memorymap` in Hyppo, so the screen still jolts once when a tool starts.)
 
+**Ownership.** A hello from the owner gets a session when none runs. A hello from the same
+computer while a session runs is answered "busy 1", unless that session has been silent for
+`IDLE_SECS` (5 s): then it ended without release (Ctrl-C) and the new one takes over. Other
+computers get "busy 2" or "busy 3". Once the helper has an owner, the status row always shows
+`reserved for fe80::xxxx:xxxx:xxxx:xxxx` (the last 8 bytes of the owner's link-local address)
+and `, busy` or `, idle` (as the border; RUN/STOP while busy adds `(run/stop: not now)`). The busy
+answer goes to the sender; the session's reply addresses in the frame template are saved and
+restored around it.
+
 **Border.** Red as soon as a request arrives, green when the helper is idle (no write batch
 open, no request for 5 seconds), blinking red after a fatal error.
 
@@ -129,7 +138,7 @@ The protocol is remotesd_eth's (`"mreq"` / `"mrsp"`, sequence number, opcode ove
 
 | Opcode | Request | Answer |
 |---|---|---|
-| $FD hello | locks the session to the sender's address and port (a repeated hello from it is answered again); a new session also resets the batch state | header, helper version (`HELPER_VERSION`) |
+| $FD hello | locks the session to the sender's address and port (a repeated hello from it is answered again); a new session also resets the batch state. The computer (IPv6 address) of the first session owns the helper until it ends (quit, RUN/STOP, a trigger) | header, helper version (`HELPER_VERSION`); or "busy": version, status (1 = a session of the same computer runs, 2 = one of another computer, 3 = another computer owns the idle helper), the owner's address (16 bytes) |
 | $15 release | ends the session, the helper keeps running unlocked: the next tool says hello to it instead of triggering and loading a new helper (no trigger: the screen stays as it is) | header |
 | $04 read | up to 128 sectors | one answer per sector, consecutive sequence numbers; the next sector is read from the card while the current one is sent |
 | $02 write | one sector (written and read back right away), or one sector of a batch of 2..128 | acknowledged on arrival; batch sectors go into a cache at $40000 and are written in order as they arrive (multi-sector write), then read back and compared |

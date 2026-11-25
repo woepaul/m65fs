@@ -47,6 +47,7 @@ directory on purpose; run `m65.pwd` first when a relative path matters.
 | `M65_IMAGE=card.img` | Work on an SD card image file instead of a MEGA65 (file tools only) |
 | `M65_PROGRESS=0` / `1` | Progress of large transfers (`m65.cp -v`, `m65.boot`, `m65.defrag --fix`): by default shown only on a terminal; `0` never, `1` always |
 | `M65_RESET=1` | Reset the MEGA65 after each file tool. By default it keeps showing the transfer screen until `m65.reset`, `m65.boot` or `m65.run` |
+| `M65_FORCE=1` | Take the MEGA65 over even if it is busy with another command or reserved for another computer. Only when the user asks for it |
 
 Exit status: 0 = ok, 1 = error, with the message on stderr in coreutils style
 (`m65.cp: cannot stat 'm65:/x': No such file or directory`). For `m65.defrag`: 0 = clean,
@@ -161,6 +162,8 @@ line, or a message on stderr; defrag tells how many files it finished).
 | `an image file has no working directory` | With `M65_IMAGE`, use absolute paths |
 | `program loads at $XXXX: only $0801 … and $2001 …` | A machine-code PRG: ask for the start address and use `m65.run --jump HEX` |
 | `session … failed earlier` / timeouts | Network trouble. The tool can be run again; for writes, see safety rule 4 |
+| `the MEGA65 is busy with another m65 command on this computer` | Another m65 tool is still running (e.g. a long copy): run tools one after the other. After a Ctrl-C it works again after 5 s |
+| `the MEGA65 is busy with a command from another computer` / `reserved for another computer (fe80::…)` | Someone else uses the MEGA65. Don't force it; ask the user. It is free after `m65.reset` on that computer or RUN/STOP on the MEGA65; `M65_FORCE=1` takes it over (ends their session) |
 | `MEGA65 did not acknowledge quit` (warning) | The machine may still show the transfer helper; `m65.reset` or the reset button |
 
 ## Using the Java API directly

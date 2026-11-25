@@ -626,11 +626,11 @@ public final class M65fs {
   private void copying(CopyLine progress, String src, Path target, Mega65FileSystem card, Copy copy)
       throws IOException {
     String text = "'" + src + "' -> '" + target + "'";
-    // on the MEGA65 with the command in front: cp '.../file' -> '/DIR/file'
-    String cmd = commandName + " ";
+    // on the MEGA65 under the command line, indented, without quotes (room for the paths):
+    //   .../dir/file -> /DIR/file
     if (card != null) {
-      card.showOnMega65(cmd + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - cmd.length()),
-          Mega65FileSystem.LineKind.INFO, false, cmd.length());
+      card.showOnMega65(INDENT + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - INDENT.length()),
+          Mega65FileSystem.LineKind.INFO, false, INDENT.length());
     }
     Runnable report = () -> {
       err.println(prog + ": interrupted: '" + src + "' -> '" + target + "' not completed");
@@ -650,8 +650,8 @@ public final class M65fs {
       }
       if (card != null && !ok) {
         try {
-          card.showOnMega65(cmd + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - cmd.length()
-              - " failed".length()) + " failed", Mega65FileSystem.LineKind.ERROR, true, cmd.length());
+          card.showOnMega65(INDENT + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - INDENT.length()
+              - " failed".length()) + " failed", Mega65FileSystem.LineKind.ERROR, true, INDENT.length());
         } catch (IOException | RuntimeException e) {
           // the session may be what failed: the error itself is reported
         }
@@ -659,20 +659,24 @@ public final class M65fs {
     }
   }
 
+  /** Lines on the MEGA65 that belong to the command line above them (files copied, moved). */
+  static final String INDENT = "  ";
+
   /**
-   * {@code 'src' -> 'dst'} in at most {@code width} characters (the MEGA65's screen): a path
-   * that does not fit loses its start ({@code '.../dir/file'}), so that both file names stay;
-   * the source (usually the long path on the computer) gives way first.
+   * {@code src -> dst} in at most {@code width} characters (the MEGA65's screen; no quotes, to
+   * leave room for the paths): a path that does not fit loses its start ({@code .../dir/file}),
+   * so that both file names stay; the source (usually the long path on the computer) gives way
+   * first.
    */
   static String fitCopyLine(String src, String dst, int width) {
-    int frame = "'' -> ''".length();
+    int frame = " -> ".length();
     if (src.length() + dst.length() + frame <= width) {
-      return "'" + src + "' -> '" + dst + "'";
+      return src + " -> " + dst;
     }
     int room = width - frame;
     int d = Math.min(dst.length(), Math.max(room / 2, room - src.length()));
     int s = room - d;
-    return "'" + tail(src, s) + "' -> '" + tail(dst, d) + "'";
+    return tail(src, s) + " -> " + tail(dst, d);
   }
 
   /** The end of {@code p} in {@code n} characters, after "..." if it is shortened. */
@@ -969,7 +973,7 @@ public final class M65fs {
     String file = oneOperand(a, "FILE.prg");
     requireMachine();
     byte[] prg = Files.readAllBytes(Path.of(file));
-    MachineMode m = Mega65Launcher.runPrg(target(), prg, options);
+    MachineMode m = Mega65Launcher.runPrg(freeTarget(), prg, options);
     out.println("started " + file + (m == null ? " (jump)" : " in " + m + " mode"));
     return 0;
   }
@@ -979,7 +983,7 @@ public final class M65fs {
     Video v = video(a);
     noOperands(a);
     requireMachine();
-    Mega65Launcher.reset(target(), mode, null, v);
+    Mega65Launcher.reset(freeTarget(), mode, null, v);
     out.println("reset to " + mode + " mode" + (mode == MachineMode.MEGA65 ? " (drive 0 detached)" : ""));
     return 0;
   }
@@ -1067,6 +1071,7 @@ public final class M65fs {
       return Mega65FileSystem.openImage(Path.of(image), e);
     }
     e.put("target", machine());
+    e.put("force", force());
     var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
     try {
       fs.showOnMega65(commandLine, Mega65FileSystem.LineKind.COMMAND, false, commandName.length() + 1);
@@ -1087,6 +1092,22 @@ public final class M65fs {
   private Target target() throws IOException {
     return Target.parse(machine());
   }
+
+  /**
+   * The MEGA65 for a tool that triggers it (run, reset): only if its transfer helper does not
+   * serve another computer, whose session the trigger would end ({@code M65_FORCE=1}: anyway).
+   */
+  private Target freeTarget() throws IOException {
+    Target t = target();
+    RemoteSdSession.ensureFree(t, RemoteSdSession.Options.defaults().withForce(force()));
+    return t;
+  }
+
+  /** {@code M65_FORCE=1}: take the MEGA65 over even if it serves another computer. */
+  private boolean force() {
+    return env.getOrDefault("M65_FORCE", "").equals("1");
+  }
+
 
   /**
    * The MEGA65's address ({@code fe80::…%if}): {@code M65_TARGET}; else the address remembered
@@ -1301,6 +1322,9 @@ public final class M65fs {
           M65_RESET=1                         reset the MEGA65 after each file command
                                               (default: it keeps showing the transfer screen
                                               until m65.reset, boot or run)
+          M65_FORCE=1                         take the MEGA65 over even if it is busy with
+                                              another command or reserved for another
+                                              computer (until m65.reset there or RUN/STOP)
 
         exit status: 0 ok, 1 error (m65.defrag: 1 fragmented files remain, 2 error)""");
   }

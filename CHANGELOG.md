@@ -14,10 +14,10 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 - The transfer helper's screen: 80 x 50 instead of a few lines in 40 columns. It shows the
   state, statistics (requests, KiB read and written, each per second, and the time running)
   and a log of what the tools do: the command line without `m65.` (white, e.g.
-  `cp -rv game m65:/GAMES`) and a line for every copied file (green, also without `-v`; red
-  with `failed`), e.g. `cp '.../game/disk1.d81' -> '/GAMES/game/disk1.d81'`, and the files
-  `m65.defrag --fix` moves. Lines longer than 80 characters keep the command name and lose the
-  start of their paths. The log fills from the top and scrolls when full (in the vertical
+  `cp -rv game m65:/GAMES`) and below it, indented, a line for every copied file (green, also
+  without `-v`; red with `failed`), e.g. `  .../game/disk1.d81 -> /GAMES/game/disk1.d81` (no
+  quotes, to leave room for the paths), and the files `m65.defrag --fix` moves. Too long
+  lines keep the command name or indent and lose the start of their paths. The log fills from the top and scrolls when full (in the vertical
   blank, so that the screen does not jolt); it survives the next command (each one starts the
   helper again). A copied file costs one round trip more for its line.
 - Tools reuse the running transfer helper: a tool ends its session with a release (new helper
@@ -27,6 +27,18 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   switch to a 40-column C64 screen for a moment). The hello answer carries the helper's
   version, so only a helper of the same m65fs version is reused; otherwise, or if nothing
   answers within 150 ms, the tool triggers as before.
+- A busy MEGA65 is no longer taken over. So far a tool always triggered the MEGA65 if the
+  helper did not answer it, which ended another command's session (from a second terminal or
+  another computer) in the middle of its work. Now the helper answers "busy", and the tool
+  stops with exit status 1 and a message:
+  - another m65 command of this computer is running: try again when it is done (after Ctrl-C
+    the old session counts as ended once it has been silent for 5 seconds);
+  - a command of another computer is running;
+  - the helper is reserved for another computer: the computer that started it owns it (by its
+    IPv6 address) until `m65.reset` there, `m65.boot`/`m65.run`, or RUN/STOP on the MEGA65.
+    The helper's status row shows `reserved for fe80::…, busy` or `…, idle`.
+  `m65.run` and `m65.reset` ask the helper before they trigger. `M65_FORCE=1` takes the
+  MEGA65 over anyway. Library: `Mega65BusyException`, env `force`.
 - The helper's border shows its state: red while requests come in, green when idle (then
   RUN/STOP works), blinking red after a fatal error.
 - RUN/STOP (or ESC) on the MEGA65 quits the transfer helper into BASIC 65 when it is idle (no

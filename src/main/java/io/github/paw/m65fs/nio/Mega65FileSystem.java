@@ -104,6 +104,7 @@ public final class Mega65FileSystem extends FileSystem {
     var options = RemoteSdSession.Options.defaults().withQuitOnClose(env.bool("quitOnClose", true));
     options = env.duration("timeout").map(options::withTimeout).orElse(options);
     options = env.integer("writeWindow").map(options::withWriteWindow).orElse(options);
+    options = options.withForce(env.bool("force", false));
     return attach(provider, key, authority, RemoteSdSession.connect(target, options), env);
   }
 

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.time.Duration;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -65,6 +66,11 @@ public final class FakeRemoteSd implements AutoCloseable {
 
   // session
   private SocketAddress client;
+  private InetAddress owner;
+  private long lastClientRequest;
+  /** A session of the same computer silent for this long counts as ended (helper: 5 s). */
+  public volatile Duration staleAfter = Duration.ofSeconds(5);
+  public volatile int busyAnswers;
   // write state
   private int currentBatchCounter = 0xff;
   private boolean writeBatchActive;
@@ -137,29 +143,15 @@ public final class FakeRemoteSd implements AutoCloseable {
       return;
     }
     int op = p[6] & 0xff;
-    if (client == null) {
-      if (op != Request.OP_HELLO) {
-        return; // unauthenticated
-      }
-    } else if (!client.equals(from)) {
-      if (op == Request.OP_HELLO) {
-        fatal.add("hello requests from multiple clients");
-      }
+    if (op == Request.OP_HELLO) {
+      hello(p, from);
       return;
     }
+    if (client == null || !client.equals(from)) {
+      return; // only the session's client
+    }
+    lastClientRequest = System.nanoTime();
     switch (op) {
-      case Request.OP_HELLO -> {
-        if (client == null) {
-          // a new session, perhaps not the first of this helper: no earlier batch counts
-          currentBatchCounter = 0xff;
-          writeBatchActive = false;
-          hellos++;
-        }
-        client = from;
-        byte[] r = header(p, 8);
-        r[7] = (byte) helperVersion;
-        reply(r, from);
-      }
       case Request.OP_RELEASE -> {
         reply(header(p, 7), from);
         client = null;
@@ -168,8 +160,9 @@ public final class FakeRemoteSd implements AutoCloseable {
       case Request.OP_QUIT -> {
         quit = true;
         reply(header(p, 7), from);
-        // the MEGA65 resets; the next session starts a new helper
+        // the MEGA65 resets; the next session starts a new helper, owned by nobody
         client = null;
+        owner = null;
         currentBatchCounter = 0xff;
         writeBatchActive = false;
       }
@@ -217,6 +210,58 @@ public final class FakeRemoteSd implements AutoCloseable {
       default -> { }
     }
   }
+
+  /** Like the helper: the session's client, the owner (a computer), or busy. */
+  private void hello(byte[] p, SocketAddress from) throws IOException {
+    InetAddress computer = ((InetSocketAddress) from).getAddress();
+    int busyStatus = 0;
+    if (client != null && !client.equals(from)) {
+      if (!((InetSocketAddress) client).getAddress().equals(computer)) {
+        busyStatus = 2;
+      } else if (System.nanoTime() - lastClientRequest < staleAfter.toNanos()) {
+        busyStatus = 1;
+      }
+    } else if (client == null && owner != null && !owner.equals(computer)) {
+      busyStatus = 3;
+    }
+    if (busyStatus != 0) {
+      busyAnswers++;
+      byte[] r = header(p, 25);
+      r[7] = (byte) helperVersion;
+      r[8] = (byte) busyStatus;
+      System.arraycopy(owner.getAddress(), 0, r, 9, 16);
+      reply(r, from);
+      return;
+    }
+    if (!from.equals(client)) {
+      // a new session, perhaps not the first of this helper: no earlier batch counts
+      currentBatchCounter = 0xff;
+      writeBatchActive = false;
+      hellos++;
+    }
+    client = from;
+    owner = computer;
+    lastClientRequest = System.nanoTime();
+    byte[] r = header(p, 8);
+    r[7] = (byte) helperVersion;
+    reply(r, from);
+  }
+
+  /** Simulates another computer ({@code fe80::99}) that owns the idle helper. */
+  public void reservedForAnotherComputer() {
+    owner = ANOTHER_COMPUTER.getAddress();
+    client = null;
+  }
+
+  /** Simulates a session of another computer ({@code fe80::99}) that is running. */
+  public void sessionOfAnotherComputer() {
+    owner = ANOTHER_COMPUTER.getAddress();
+    client = ANOTHER_COMPUTER;
+    lastClientRequest = System.nanoTime();
+  }
+
+  static final InetSocketAddress ANOTHER_COMPUTER = new InetSocketAddress(
+      InetAddress.ofLiteral("fe80::99"), 4510);
 
   /**
    * Like the hypervisor: cdroot, then setname/findfile/chdir for each name, compared ignoring case

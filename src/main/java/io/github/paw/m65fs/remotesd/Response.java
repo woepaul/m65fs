@@ -15,6 +15,13 @@ public sealed interface Response {
 
   record ReleaseAck(int seq) implements Response {}
 
+  /**
+   * Hello answer of a helper that serves another client: {@code status} 1 = a session of the
+   * same computer runs (try again shortly), 2 = a session of another computer runs, 3 = another
+   * computer owns the idle helper; {@code owner} = that computer's IPv6 address (16 bytes).
+   */
+  record HelloBusy(int seq, int version, int status, byte[] owner) implements Response {}
+
   record QuitAck(int seq) implements Response {}
 
   /** The helper shows the line of a {@link Request.Text}. */
@@ -48,7 +55,16 @@ public sealed interface Response {
     int seq = WindowProtocol.le16(b, 4);
     int op = b.get(6) & 0xff;
     Response r = switch (op) {
-      case Request.OP_HELLO -> len == 7 ? new HelloAck(seq, 0) : len == 8 ? new HelloAck(seq, b.get(7) & 0xff) : null;
+      case Request.OP_HELLO -> switch (len) {
+        case 7 -> new HelloAck(seq, 0);
+        case 8 -> new HelloAck(seq, b.get(7) & 0xff);
+        case 25 -> {
+          byte[] owner = new byte[16];
+          b.get(9, owner);
+          yield new HelloBusy(seq, b.get(7) & 0xff, b.get(8) & 0xff, owner);
+        }
+        default -> null;
+      };
       case Request.OP_RELEASE -> len == 7 ? new ReleaseAck(seq) : null;
       case Request.OP_QUIT -> len == 7 ? new QuitAck(seq) : null;
       case Request.OP_TEXT -> len == 7 ? new TextAck(seq) : null;

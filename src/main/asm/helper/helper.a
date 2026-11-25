@@ -4,9 +4,10 @@
 ; remotesd_eth ("mreq"/"mrsp" over UDP port 4510, IPv6 link-local), restricted to what m65fs
 ; uses (see io.github.paw.m65fs.remotesd.Request and Response):
 ;   $FD hello        locks the session to the sender (address and port); answers with the
-;                    helper's version (HELPER_VERSION)
-;   $15 release      unlocks it again: the next hello may come from another client (the next
-;                    tool reuses the running helper instead of triggering and loading it again)
+;                    helper's version (HELPER_VERSION). The first sender's computer (IPv6
+;                    address) owns the helper until it ends (quit, RUN/STOP); others get "busy"
+;   $15 release      ends the session: the next hello from the owner (the next tool) reuses
+;                    the running helper instead of triggering and loading it again
 ;   $04 read         up to 128 sectors, one answer per sector
 ;   $02 write        one sector, or one sector of a batch of 2..128 (written in order as the
 ;                    sectors arrive, read back and compared when the batch is complete)
@@ -30,8 +31,10 @@
 
 !cpu m65
 
-HELPER_VERSION = 1              ; in the hello answer; m65fs only reuses a running helper of
-                                ; its own version (RemoteSdSession.HELPER_VERSION)
+HELPER_VERSION = 3              ; in the hello answer; m65fs only reuses a running helper of
+                                ; its own version (RemoteSdSession.HELPER_VERSION). Raise both
+                                ; with every change of the helper: otherwise a running older
+                                ; helper of the same number is reused
 
 ; ---------------------------------------------------------------- memory
 SCREEN  = $3000                 ; 80 x 50 = 4000 bytes
@@ -46,6 +49,8 @@ VBUF1   = $2800                 ; 512-byte compare buffers
 VBUF2   = $2a00
 NAMEBUF = $2c00                 ; file/directory name for the hypervisor (page aligned)
 FLAGS   = $2d00                 ; per batch slot: sector received
+OWNER   = $2d80                 ; 16: IPv6 address of the computer that owns the helper
+SAVEBUF = $2d90                 ; 24: the session's reply addresses during a busy answer
 CACHE   = $40000                ; batch sectors (128 x 512 bytes)
 ETHBUF  = $ffde800              ; Ethernet buffer: RX when read (length first), TX when written
 SDBUF   = $ffd6e00              ; SD card sector buffer
@@ -104,6 +109,7 @@ fps      = $57                  ; frames per second (50 PAL, 60 NTSC)
 idle     = $58                  ; seconds since the last request (up to 255)
 tlen     = $59                  ; text: length
 roff     = $5a                  ; 2: text: offset of its row
+owned    = $5c                  ; nonzero once a computer owns the helper (OWNER)
 
 ; ---------------------------------------------------------------- screen layout
 !macro at .row, .col {
@@ -266,9 +272,6 @@ dispatch:
         inq
         stq n_req
         ldz #$00
-        stz idle                ; a request: not idle
-        lda #2                  ; border red: busy
-        sta $d020
         lda RXBUF + F_OP
         cmp #$fd
         lbeq op_hello
@@ -276,6 +279,7 @@ dispatch:
         beq .out
         jsr same_client
         bne .out
+        jsr active
         lda RXBUF + F_OP
         cmp #$02
         lbeq op_write
@@ -316,12 +320,135 @@ mrsp:   !text "mrsp"
 ; ---------------------------------------------------------------- requests
 op_hello:
         lda client
-        beq +
+        beq .free
         jsr same_client
-        bne ++                  ; another client: ignored
-        bra .hello_ack          ; repeated hello (answer lost): answer again
-+       ldx #5                  ; lock: the client's MAC, address and port go into the reply
--       lda RXBUF + F_ETHSRC,x  ; frame
+        beq .hello_ack          ; repeated hello (answer lost): answer again
+        ldx #15                 ; another socket of the computer with the session?
+-       lda RXBUF + F_IPSRC,x
+        cmp TXBUF + F_IPDST,x
+        bne .other
+        dex
+        bpl -
+        lda idle                ; yes: a session that has been silent for a while ended without
+        cmp #IDLE_SECS          ; release (Ctrl-C): take over; otherwise it waits
+        bcs .lock
+        lda #1                  ; busy: a session of the same computer runs
+        jmp busy_reply
+.other: lda #2                  ; busy: a session of another computer runs
+        jmp busy_reply
+.free:  lda owned
+        beq .lock
+        ldx #15
+-       lda RXBUF + F_IPSRC,x
+        cmp OWNER,x
+        bne +
+        dex
+        bpl -
+        bra .lock               ; the owner
++       lda #3                  ; busy: owned by another computer
+        jmp busy_reply
+.lock:  jsr take_sender         ; lock: the client's MAC, address and port go into the reply frame
+        ldx #15
+-       lda RXBUF + F_IPSRC,x
+        sta OWNER,x
+        dex
+        bpl -
+        lda #1
+        sta owned
+        sta client
+        lda #$ff                ; a new session (perhaps not the first of this helper): no batch
+        sta b_counter           ; of an earlier one counts (its counter could come again)
+        lda #$00
+        sta b_active
+        jsr show_owner
+        jsr active
+.hello_ack:
+        lda #HELPER_VERSION
+        sta TXBUF + F_ARG
+        lda #8
+        jmp reply
+
+; a request of the session: not idle, border red, status "busy"
+active: lda #$00
+        sta idle
+        lda #2
+        sta $d020
+        lda owned
+        beq +
+        lda #state_busy - state_words
+        jmp show_state
++       rts
+
+; the status row once the helper has an owner: reserved for fe80::xxxx:xxxx:xxxx:xxxx, then
+; the state (show_state)
+show_owner:
+        ldx #msg_reserved - msgs
+        jsr status
+        ldx #8                  ; link-local: the last 8 bytes of the address
+        ldy #0
+-       lda OWNER,x
+        lsr
+        lsr
+        lsr
+        lsr
+        jsr .hex
+        lda OWNER,x
+        and #$0f
+        jsr .hex
+        txa
+        lsr                     ; after bytes 9, 11, 13 a colon
+        bcc +
+        cpx #15
+        beq +
+        lda #':'
+        sta SCREEN + ROW_STATUS * COLS + COL_TOTAL + RESERVED_LEN,y
+        iny
++       inx
+        cpx #16
+        bne -
+        rts
+.hex:   cmp #10                 ; screen codes: 0-9, a-f (1-6 in the lower case set)
+        bcc +
+        sbc #9
+        bra ++
++       ora #'0'
+++      sta SCREEN + ROW_STATUS * COLS + COL_TOTAL + RESERVED_LEN,y
+        iny
+        rts
+
+; ", busy" or ", idle" (A = offset in state_words) after the owner; idle also clears the note
+; that RUN/STOP has to wait
+show_state:
+        tax
+        ldy #0
+-       lda state_words,x
+        sta SCREEN + ROW_STATUS * COLS + COL_STATE,y
+        inx
+        iny
+        cpy #STATE_LEN
+        bne -
+        cpx #state_idle - state_words + STATE_LEN
+        bne +
+        lda #' '
+        ldy #note_end - note - 1
+-       sta SCREEN + ROW_STATUS * COLS + COL_NOTE,y
+        dey
+        bpl -
++       rts
+
+state_words:
+state_busy: !scr ", busy"
+state_idle: !scr ", idle"
+STATE_LEN = 6
+note:   !scr "(run/stop: not now)"
+note_end:
+COL_STATE = COL_TOTAL + RESERVED_LEN + 19   ; after xxxx:xxxx:xxxx:xxxx
+COL_NOTE  = COL_STATE + STATE_LEN + 2
+
+; the sender of the received frame becomes the destination of replies
+take_sender:
+        ldx #5
+-       lda RXBUF + F_ETHSRC,x
         sta TXBUF,x
         dex
         bpl -
@@ -334,27 +461,58 @@ op_hello:
         sta TXBUF + F_UDP + 2
         lda RXBUF + F_UDP + 1
         sta TXBUF + F_UDP + 3
-        inc client
-        lda #$ff                ; a new session (perhaps not the first of this helper): no batch
-        sta b_counter           ; of an earlier one counts (its counter could come again)
-        lda #$00
-        sta b_active
-        ldx #msg_connected - msgs
-        jsr status
-.hello_ack:
+        rts
+
+; hello answer "busy" (A = 1: a session of the same computer runs, 2: one of another computer,
+; 3: owned by another computer): version, status, the owner's address. Sent to the sender;
+; the session's reply addresses are kept.
+busy_reply:
+        pha
+        ldx #5
+-       lda TXBUF,x
+        sta SAVEBUF,x
+        dex
+        bpl -
+        ldx #15
+-       lda TXBUF + F_IPDST,x
+        sta SAVEBUF + 6,x
+        lda OWNER,x
+        sta TXBUF + F_ARG + 2,x
+        dex
+        bpl -
+        lda TXBUF + F_UDP + 2
+        sta SAVEBUF + 22
+        lda TXBUF + F_UDP + 3
+        sta SAVEBUF + 23
+        jsr take_sender
+        pla
+        sta TXBUF + F_ARG + 1
         lda #HELPER_VERSION
         sta TXBUF + F_ARG
-        lda #8
-        jmp reply
-++      rts
+        lda #25
+        jsr reply               ; the frame is in the Ethernet buffer now
+        ldx #5
+-       lda SAVEBUF,x
+        sta TXBUF,x
+        dex
+        bpl -
+        ldx #15
+-       lda SAVEBUF + 6,x
+        sta TXBUF + F_IPDST,x
+        dex
+        bpl -
+        lda SAVEBUF + 22
+        sta TXBUF + F_UDP + 2
+        lda SAVEBUF + 23
+        sta TXBUF + F_UDP + 3
+        rts
 
-op_release:                     ; answer, then unlock
-        lda #7
+op_release:                     ; answer, then unlock (the owner stays; "idle" follows with
+        lda #7                  ; the border, after IDLE_SECS)
         jsr reply
         lda #$00
         sta client
-        ldx #msg_waiting - msgs
-        jmp status
+        rts
 
 op_quit:
         lda #7
@@ -1339,15 +1497,15 @@ texts:  +at 0, 1
 
 msgs:
 msg_waiting:   !scr "waiting for the host", 0
-msg_connected: !scr "connected", 0
-msg_busy:      !scr "busy: press run/stop again when idle", 0
 msg_quit:      !scr "quit", 0
-msg_mixed:     !scr "error: read during a write batch", 0
-msg_conflict:  !scr "error: single write during a batch", 0
-msg_slot:      !scr "error: batch slot out of range", 0
-msg_duplicate: !scr "error: duplicate with other data", 0
-msg_verify:    !scr "error: sector verification failed", 0
-msg_nomac:     !scr "error: no mac address configured", 0
+msg_reserved:  !scr "reserved for fe80::", 0
+RESERVED_LEN = 19
+msg_mixed:     !scr "error: read during write batch", 0
+msg_conflict:  !scr "error: write during batch", 0
+msg_slot:      !scr "error: bad batch slot", 0
+msg_duplicate: !scr "error: duplicate differs", 0
+msg_verify:    !scr "error: verify failed", 0
+msg_nomac:     !scr "error: no mac address", 0
 
 ; ---------------------------------------------------------------- keyboard, statistics
 ; RUN/STOP or ESC: quit into MEGA65 mode when idle
@@ -1363,8 +1521,11 @@ keys:   lda $d610               ; hardware keyboard queue (ASCII), 0 = empty
         ldx #msg_quit - msgs
         jsr status
         jmp quit65
-+       ldx #msg_busy - msgs
-        jmp status
++       ldx #note_end - note - 1  ; not idle: say so at the end of the status row
+-       lda note,x
+        sta SCREEN + ROW_STATUS * COLS + COL_NOTE,x
+        dex
+        bpl -
 .krts:  rts
 
 ; until no key of the keyboard matrix has been down for about 50 ms (CIA 1), then an empty
@@ -1425,6 +1586,10 @@ tick:   lda $d7fa
         bcc +
         lda #5                  ; border green: idle
         sta $d020
+        lda owned
+        beq +
+        lda #state_idle - state_words
+        jsr show_state
 +       ldq secs
         inq
         stq secs

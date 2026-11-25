@@ -46,8 +46,10 @@ public final class RemoteSdSession implements AutoCloseable {
    * @param writeWindow override for the write window size (default: 3 or 28 depending on the model)
    * @param quitOnClose send quit on {@link #close()}, which resets the MEGA65
    * @param helperProgram the transfer helper program to bootstrap
+   * @param force take the MEGA65 over (trigger) even if its helper serves another command or computer
    */
-  public record Options(Duration timeout, OptionalInt writeWindow, boolean quitOnClose, byte[] helperProgram) {
+  public record Options(Duration timeout, OptionalInt writeWindow, boolean quitOnClose, byte[] helperProgram,
+      boolean force) {
     public Options {
       Objects.requireNonNull(timeout);
       Objects.requireNonNull(writeWindow);
@@ -55,19 +57,23 @@ public final class RemoteSdSession implements AutoCloseable {
     }
 
     public static Options defaults() {
-      return new Options(Etherload.DEFAULT_TIMEOUT, OptionalInt.empty(), true, Etherload.bundledHelper());
+      return new Options(Etherload.DEFAULT_TIMEOUT, OptionalInt.empty(), true, Etherload.bundledHelper(), false);
     }
 
     public Options withQuitOnClose(boolean q) {
-      return new Options(timeout, writeWindow, q, helperProgram);
+      return new Options(timeout, writeWindow, q, helperProgram, force);
     }
 
     public Options withWriteWindow(int w) {
-      return new Options(timeout, OptionalInt.of(w), quitOnClose, helperProgram);
+      return new Options(timeout, OptionalInt.of(w), quitOnClose, helperProgram, force);
     }
 
     public Options withTimeout(Duration t) {
-      return new Options(t, writeWindow, quitOnClose, helperProgram);
+      return new Options(t, writeWindow, quitOnClose, helperProgram, force);
+    }
+
+    public Options withForce(boolean f) {
+      return new Options(timeout, writeWindow, quitOnClose, helperProgram, f);
     }
   }
 
@@ -77,6 +83,7 @@ public final class RemoteSdSession implements AutoCloseable {
   private final Options options;
   private Duration timeout;
   private int helperVersion = -1;
+  private Response.HelloBusy busy;
   private int writeWindow = 3;
   private int modelId = -1;
   private Mode mode = Mode.IDLE;
@@ -100,8 +107,12 @@ public final class RemoteSdSession implements AutoCloseable {
     this.quitOnClose = quit;
   }
 
-  /** The version of the bundled helper (its hello answer); only such a helper is reused. */
-  public static final int HELPER_VERSION = 1;
+  /**
+   * The version of the bundled helper (its hello answer); only such a helper is reused. Raised
+   * with every change of the helper (together with {@code HELPER_VERSION} in helper.a).
+   */
+  public static final int HELPER_VERSION = 3;
+
 
   /** How long {@link #connect} waits for a running helper to answer hello. */
   static final Duration RUNNING_HELPER_TIMEOUT = Duration.ofMillis(150);
@@ -110,6 +121,9 @@ public final class RemoteSdSession implements AutoCloseable {
    * Opens a session on {@code target}: with the transfer helper that is still running there
    * (left by an earlier session that ended with release, see {@link #close()}), or else after
    * bootstrapping it (trigger, upload, start).
+   *
+   * @throws Mega65BusyException if the helper serves another command or computer (unless
+   *     {@code force})
    */
   public static RemoteSdSession connect(Target target, Options options) throws IOException {
     var running = attachRunning(target, options, RUNNING_HELPER_TIMEOUT);
@@ -162,6 +176,16 @@ public final class RemoteSdSession implements AutoCloseable {
     session.timeout = wait;
     try {
       session.hello();
+      if (session.busy != null) {
+        String owner = ownerText(session.busy.owner());
+        if (options.force()) {
+          LOG.log(Level.DEBUG, "helper on {0} is busy (status {1}, {2}): taken over (force)", target,
+              session.busy.status(), owner);
+          link.close();
+          return java.util.Optional.empty();
+        }
+        throw new Mega65BusyException(session.busy.status(), owner);
+      }
     } catch (Mega65TimeoutException e) {
       link.close();
       return java.util.Optional.empty();
@@ -186,17 +210,79 @@ public final class RemoteSdSession implements AutoCloseable {
     return java.util.Optional.of(session);
   }
 
+  /** An IPv6 address as usually written (RFC 5952: the longest run of zero groups as ::). */
+  static String ownerText(byte[] address) {
+    if (address.length != 16) {
+      return "?";
+    }
+    int[] g = new int[8];
+    for (int i = 0; i < 8; i++) {
+      g[i] = (address[2 * i] & 0xff) << 8 | address[2 * i + 1] & 0xff;
+    }
+    int best = -1;
+    int bestLen = 1; // a single zero group stays
+    for (int i = 0; i < 8; ) {
+      int j = i;
+      while (j < 8 && g[j] == 0) {
+        j++;
+      }
+      if (j - i > bestLen) {
+        best = i;
+        bestLen = j - i;
+      }
+      i = j == i ? i + 1 : j;
+    }
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < 8; i++) {
+      if (i == best) {
+        sb.append("::");
+        i += bestLen - 1;
+        continue;
+      }
+      if (sb.length() > 0 && sb.charAt(sb.length() - 1) != ':') {
+        sb.append(':');
+      }
+      sb.append(Integer.toHexString(g[i]));
+    }
+    return sb.toString();
+  }
+
   /**
-   * Whether an unlocked helper of our version runs on {@code target}: hello, then release
-   * (a quick check of a remembered address that, unlike a trigger, leaves the screen alone).
+   * Makes sure a trigger does not end another command's session: asks a running helper first.
+   * For tools that trigger the MEGA65 (run, reset).
+   *
+   * @throws Mega65BusyException if the helper serves another command or computer (unless
+   *     {@code force})
+   */
+  public static void ensureFree(Target target, Options options) throws IOException {
+    attachRunning(target, options.withQuitOnClose(false), RUNNING_HELPER_TIMEOUT).ifPresent(s -> {
+      try {
+        s.close();
+      } catch (IOException e) {
+        // release is best effort
+      }
+    });
+  }
+
+  /**
+   * Whether a transfer helper answers on {@code target} (a quick check of a remembered address
+   * that, unlike a trigger, leaves the MEGA65's screen alone). If it lets us in, the session is
+   * released again; a busy answer counts as well.
    */
   public static boolean helperAnswers(Target target, Duration wait) throws IOException {
-    var s = attachRunning(target, Options.defaults().withQuitOnClose(false), wait);
-    if (s.isEmpty()) {
-      return false;
+    try (UdpLink link = UdpLink.open(target)) {
+      var session = new RemoteSdSession(new SlidingWindow(link, SessionProtocol.INSTANCE),
+          Options.defaults().withQuitOnClose(false).withTimeout(wait));
+      try {
+        session.hello();
+      } catch (Mega65TimeoutException e) {
+        return false;
+      }
+      if (session.busy == null) {
+        session.close(); // release
+      }
+      return true;
     }
-    s.get().close();
-    return true;
   }
 
   /** The helper's version from its hello answer. */
@@ -224,8 +310,13 @@ public final class RemoteSdSession implements AutoCloseable {
 
   private void hello() throws IOException {
     control(new Request.Hello(), rx -> {
-      if (Response.parse(rx).orElse(null) instanceof Response.HelloAck(_, int v)) {
-        helperVersion = v;
+      switch (Response.parse(rx).orElse(null)) {
+        case Response.HelloAck(_, int v) -> helperVersion = v;
+        case Response.HelloBusy b -> {
+          helperVersion = b.version();
+          busy = b;
+        }
+        case null, default -> { }
       }
     });
   }

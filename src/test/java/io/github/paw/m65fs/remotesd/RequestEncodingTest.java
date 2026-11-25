@@ -143,4 +143,17 @@ class RequestEncodingTest {
     assertEquals(new Response.HelloAck(1, 7),
         Response.parse(ByteBuffer.wrap(new byte[] {'m', 'r', 's', 'p', 1, 0, (byte) 0xfd, 7})).orElseThrow());
   }
+
+  @Test
+  void ownerAddressesAreWrittenCompressed() {
+    byte[] a = new byte[16];
+    a[0] = (byte) 0xfe;
+    a[1] = (byte) 0x80;
+    a[15] = (byte) 0x99;
+    assertEquals("fe80::99", RemoteSdSession.ownerText(a));
+    a[8] = 0x12;
+    a[9] = 0x34;
+    assertEquals("fe80::1234:0:0:99", RemoteSdSession.ownerText(a));
+    assertEquals("::", RemoteSdSession.ownerText(new byte[16]));
+  }
 }

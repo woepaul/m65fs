@@ -128,7 +128,11 @@ is the original design plan, written against mega65-tools' programs.
 | `FileSystems.newFileSystem(Path.of("card.img"), Map.of("mega65", true))` | The same through the generic NIO call. That call asks every installed provider, so m65fs only takes the file with the `"mega65": true` entry and only if it is an SD card image; anything else is left to the other providers. |
 | `mega65://name/` with env `imageFile` | A local image registered under a URI, so `Path.of(URI)` works. |
 
-There is one session per MEGA65, because the helper locks itself to the first client.
+There is one session per MEGA65, because the helper locks itself to the first client. The
+computer that started the helper owns it until the helper ends (`m65.reset`, booting or running
+a program, RUN/STOP on the MEGA65). While another session runs, or while another computer owns
+the helper, opening a file system throws `Mega65BusyException` instead of triggering the MEGA65
+(which would end the other session); env `force` = `true` takes it over anyway.
 `FileSystems.getFileSystem(uri)` returns the open instance.
 
 ### Options (`env` map)

@@ -79,11 +79,74 @@ class RemoteSdSessionTest {
   }
 
   @Test
-  void aHelperThatServesAnotherClientIsNotReused() throws IOException {
-    try (var fake = new FakeRemoteSd(image, 0, 0, 1);
-        var busy = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false))) {
-      assertTrue(RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(200)).isEmpty());
-      assertFalse(RemoteSdSession.helperAnswers(fake.target(), Duration.ofMillis(200)));
+  void aSecondCommandOfThisComputerIsRefusedWhileTheFirstRuns() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      var first = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false));
+      var e = assertThrows(Mega65BusyException.class,
+          () -> RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(300)));
+      assertEquals(1, e.status());
+      assertTrue(e.getMessage().contains("another m65 command on this computer"), e.getMessage());
+      first.close(); // release
+      RemoteSdSession.attachRunning(fake.target(), opts().withQuitOnClose(false), Duration.ofMillis(300))
+          .orElseThrow().close();
+      assertEquals(2, fake.hellos);
+    }
+  }
+
+  @Test
+  void aSilentSessionOfThisComputerIsTakenOver() throws Exception {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      fake.staleAfter = Duration.ofMillis(300);
+      // a command that ended without release (Ctrl-C)
+      var dead = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false)
+          .withTimeout(Duration.ofMillis(200)));
+      assertThrows(Mega65BusyException.class,
+          () -> RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(300)), "not yet");
+      Thread.sleep(400);
+      var s = RemoteSdSession.attachRunning(fake.target(), opts().withQuitOnClose(false), Duration.ofMillis(300))
+          .orElseThrow();
+      s.close();
+      dead.close(); // its release is not answered any more: no exception
+      assertEquals(2, fake.hellos);
+    }
+  }
+
+  @Test
+  void aHelperReservedForAnotherComputerIsReportedNotTriggered() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      fake.reservedForAnotherComputer();
+      var e = assertThrows(Mega65BusyException.class,
+          () -> RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(300)));
+      assertEquals(3, e.status());
+      assertEquals("fe80::99", e.owner());
+      assertTrue(e.getMessage().contains("m65.reset there or RUN/STOP"), e.getMessage());
+      assertThrows(Mega65BusyException.class, () -> RemoteSdSession.ensureFree(fake.target(), opts()));
+      // force: no session with it; the caller triggers and takes the MEGA65 over
+      assertTrue(RemoteSdSession.attachRunning(fake.target(), opts().withForce(true), Duration.ofMillis(300))
+          .isEmpty());
+      assertTrue(RemoteSdSession.helperAnswers(fake.target(), Duration.ofMillis(300)), "it is there");
+    }
+  }
+
+  @Test
+  void aSessionOfAnotherComputerIsReported() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      fake.sessionOfAnotherComputer();
+      var e = assertThrows(Mega65BusyException.class,
+          () -> RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(300)));
+      assertEquals(2, e.status());
+      assertTrue(e.getMessage().contains("busy with a command from another computer (fe80::99)"), e.getMessage());
+    }
+  }
+
+  @Test
+  void theOwnerGetsInAgainAfterItsRelease() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false)).close();
+      RemoteSdSession.ensureFree(fake.target(), opts()); // the owner: free
+      RemoteSdSession.attachRunning(fake.target(), opts().withQuitOnClose(false), Duration.ofMillis(300))
+          .orElseThrow().close();
+      assertEquals(0, fake.busyAnswers);
     }
   }
 
