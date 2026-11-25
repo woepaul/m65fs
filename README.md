@@ -308,7 +308,7 @@ Each release also has the skill as `m65fs-skill-X.Y.Z.zip`. To use it in every p
 Claude Code, unpack it into your personal skills folder:
 
 ```sh
-unzip m65fs-skill-0.2.0.zip -d ~/.claude/skills/     # creates ~/.claude/skills/m65fs/
+unzip m65fs-skill-0.2.1.zip -d ~/.claude/skills/     # creates ~/.claude/skills/m65fs/
 ```
 
 ## Finding and fixing fragmented files

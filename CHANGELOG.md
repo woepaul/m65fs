@@ -4,6 +4,18 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## 0.2.1 (2026-11-25)
+
+- Fix: after Ctrl-C during a write to the card, the next tool hung for 3 seconds at its first
+  read and failed with a timeout (the one after it worked again, with a new helper). The
+  interrupted write left the SD card in an unfinished multi-sector write, which 0.2.0's reuse
+  of the running helper carried over to the next session. The helper now resets the SD card
+  first when a session takes over in the middle of a write batch (`HELPER_VERSION` 4). The
+  sectors written so far stay; as before, nothing of the interrupted file is listed (an
+  overwritten file keeps its old content, a new file is left empty).
+- `m65.dsplit` says `No such file or directory` for a directory that does not exist (was:
+  `Not a directory`).
+
 ## 0.2.0 (2026-11-25)
 
 **The transfer helper's screen**
