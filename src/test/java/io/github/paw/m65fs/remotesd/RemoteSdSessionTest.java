@@ -53,6 +53,16 @@ class RemoteSdSessionTest {
   }
 
   @Test
+  void textGoesToTheHelpersLog() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1); var s = attach(fake)) {
+      s.showText(new Request.Text(Request.Text.WHITE, false, "m65.cp -v a m65:/"));
+      s.showText(new Request.Text(Request.Text.GREEN, false, "'a' -> '/a'"));
+      s.showText(new Request.Text(Request.Text.RED, true, "'a' -> '/a' failed"));
+      assertEquals(List.of("m65.cp -v a m65:/", "'a' -> '/a' failed"), fake.texts());
+    }
+  }
+
+  @Test
   void timeoutMarksTheSessionFailedAndCloseStillQuits() throws IOException {
     try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
       var s = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withTimeout(Duration.ofMillis(500)));

@@ -260,6 +260,18 @@ public final class RemoteSdSession implements AutoCloseable {
   }
 
   /**
+   * Shows a line in the log on the helper's screen (see {@link Request.Text}): one round trip.
+   */
+  public synchronized void showText(Request.Text text) throws IOException {
+    ensureOpen();
+    boolean[] ok = {false};
+    guardedControl(text, rx -> ok[0] |= Response.parse(rx).orElse(null) instanceof Response.TextAck);
+    if (!ok[0]) {
+      throw new IOException("no valid text response");
+    }
+  }
+
+  /**
    * The hypervisor's current drive (partition) and working directory, as the cluster where the
    * directory starts (0 or the root cluster = root directory).
    */

@@ -22,6 +22,7 @@ public sealed interface Request {
   int OP_READ_MEMORY = 0x11;
   int OP_MOUNT = 0x12;
   int OP_CWD = 0x13;
+  int OP_TEXT = 0x14;
   int OP_HELLO = 0xFD;
   int OP_RESET_TX = 0xFE;
   int OP_QUIT = 0xFF;
@@ -192,6 +193,82 @@ public sealed interface Request {
       p[HEADER] = 1;
       System.arraycopy(name, 0, p, HEADER + 1, name.length);
       return p;
+    }
+  }
+
+  /**
+   * A line for the log on the helper's screen (80 columns): what the host is doing, e.g. the
+   * {@code 'src' -> 'dst'} lines of {@code m65.cp -v}. Answered by {@link Response.TextAck}.
+   *
+   * @param colour MEGA65 colour of the line (0..15, e.g. {@link #GREEN})
+   * @param replace replace the last line instead of adding one (e.g. to append a result)
+   */
+  record Text(int colour, boolean replace, String text) implements Request {
+    public static final int COLUMNS = 80;
+    public static final int WHITE = 1;
+    public static final int RED = 2;
+    public static final int GREEN = 5;
+    public static final int YELLOW = 7;
+
+    public Text {
+      Objects.requireNonNull(text);
+      if (colour < 0 || colour > 15) {
+        throw new IllegalArgumentException("colour must be 0..15: " + colour);
+      }
+    }
+
+    @Override
+    public byte[] encode() {
+      byte[] codes = screenCodes(text);
+      byte[] p = header(HEADER + 2 + codes.length, OP_TEXT);
+      p[HEADER] = (byte) colour;
+      p[HEADER + 1] = (byte) (replace ? 1 : 0);
+      System.arraycopy(codes, 0, p, HEADER + 2, codes.length);
+      return p;
+    }
+
+    /**
+     * The text as screen codes of the MEGA65's lower case character set; longer than a row: the
+     * end, after {@code "..."} (paths: the end matters most).
+     */
+    static byte[] screenCodes(String text) {
+      int[] cps = text.codePoints().toArray();
+      int from = cps.length > COLUMNS ? cps.length - (COLUMNS - 3) : 0;
+      byte[] b = new byte[Math.min(cps.length, COLUMNS)];
+      int i = 0;
+      if (from > 0) {
+        b[i++] = '.';
+        b[i++] = '.';
+        b[i++] = '.';
+      }
+      for (int k = from; k < cps.length; k++) {
+        b[i++] = (byte) screenCode(cps[k]);
+      }
+      return b;
+    }
+
+    static int screenCode(int c) {
+      if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 1;
+      }
+      if (c >= 'A' && c <= 'Z' || c >= ' ' && c <= '?') {
+        return c;
+      }
+      return switch (c) {
+        case '@' -> 0x00;
+        case '[' -> 0x1b;
+        case '£' -> 0x1c;
+        case ']' -> 0x1d;
+        case '^' -> 0x1e;
+        case '_' -> 0x64; // bottom bar
+        case '|' -> 0x5d; // vertical bar
+        case '{' -> '(';
+        case '}' -> ')';
+        case '\\' -> '/';
+        case '~' -> '-';
+        case '`' -> '\'';
+        default -> '?';
+      };
     }
   }
 

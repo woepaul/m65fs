@@ -43,6 +43,7 @@ public final class FakeRemoteSd implements AutoCloseable {
   private final double dup;
   private final List<String> fatal = Collections.synchronizedList(new ArrayList<>());
   private final List<String> mounted = Collections.synchronizedList(new ArrayList<>());
+  private final List<byte[]> texts = Collections.synchronizedList(new ArrayList<>());
 
   volatile int modelId = 0x03;
   public volatile int mountStatus = 0;
@@ -89,6 +90,20 @@ public final class FakeRemoteSd implements AutoCloseable {
 
   public List<String> mounted() {
     return List.copyOf(mounted);
+  }
+
+  /** The log on the helper's screen, as screen codes turned back into text (lower case set). */
+  public List<String> texts() {
+    synchronized (texts) {
+      return texts.stream().map(b -> {
+        StringBuilder sb = new StringBuilder();
+        for (byte c : b) {
+          int v = c & 0xff;
+          sb.append((char) (v >= 1 && v <= 26 ? 'a' + v - 1 : v));
+        }
+        return sb.toString();
+      }).toList();
+    }
   }
 
   private void run() {
@@ -168,6 +183,17 @@ public final class FakeRemoteSd implements AutoCloseable {
         reply(r, from);
       }
       case Request.OP_CWD -> cwd(p, from);
+      case Request.OP_TEXT -> {
+        if (p.length < 9 || p.length > 9 + Request.Text.COLUMNS) {
+          return;
+        }
+        byte[] line = java.util.Arrays.copyOfRange(p, 9, p.length);
+        if (p[8] == 1 && !texts.isEmpty()) {
+          texts.removeLast();
+        }
+        texts.add(line);
+        reply(header(p, 7), from);
+      }
       case Request.OP_READ_SECTORS -> readSectors(p, from);
       case Request.OP_WRITE_SECTOR -> writeSector(p, from);
       default -> { }

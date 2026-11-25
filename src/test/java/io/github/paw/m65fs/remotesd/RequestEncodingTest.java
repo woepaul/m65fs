@@ -90,4 +90,30 @@ class RequestEncodingTest {
     assertEquals(java.util.Optional.empty(), Response.parse(ByteBuffer.wrap("mega65".getBytes())));
     assertEquals(java.util.Optional.empty(), Response.parse(ByteBuffer.wrap(new byte[] {'m', 'r', 'e', 'q', 0, 0, (byte) 0xfd})));
   }
+
+  @Test
+  void encodesTextAsScreenCodes() {
+    byte[] p = new Request.Text(Request.Text.GREEN, false, "'a.PRG' -> [x_y]@").encode();
+    assertEquals(0x14, p[6]);
+    assertEquals(5, p[7]);
+    assertEquals(0, p[8]);
+    byte[] expected = {'\'', 1, '.', 'P', 'R', 'G', '\'', ' ', '-', '>', ' ', 0x1b, 24, 0x64, 25, 0x1d, 0};
+    assertArrayEquals(expected, java.util.Arrays.copyOfRange(p, 9, p.length));
+    assertEquals(1, new Request.Text(Request.Text.RED, true, "").encode()[8]);
+  }
+
+  @Test
+  void aLongTextKeepsItsEnd() {
+    String line = "x".repeat(100) + "END";
+    byte[] p = new Request.Text(1, false, line).encode();
+    assertEquals(9 + 80, p.length);
+    assertEquals("...", new String(p, 9, 3, java.nio.charset.StandardCharsets.ISO_8859_1));
+    assertEquals("END", new String(p, p.length - 3, 3, java.nio.charset.StandardCharsets.ISO_8859_1));
+  }
+
+  @Test
+  void parsesTextAck() {
+    byte[] r = {'m', 'r', 's', 'p', 3, 0, 0x14};
+    assertEquals(new Response.TextAck(3), Response.parse(ByteBuffer.wrap(r)).orElseThrow());
+  }
 }

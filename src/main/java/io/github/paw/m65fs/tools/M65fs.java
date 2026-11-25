@@ -71,6 +71,7 @@ public final class M65fs {
   private boolean stdinUsed;
   private final Map<String, String> env;
   private String prog = "m65";
+  private String commandLine = "m65";
   private int status;
 
   private M65fs(Map<String, String> env, InputStream in, PrintStream out, PrintStream err) {
@@ -160,6 +161,8 @@ public final class M65fs {
     }
     String cmd = a.removeFirst();
     prog = "m65." + cmd;
+    commandLine = prog + a.stream().map(x -> x.isEmpty() || x.contains(" ") ? " '" + x + "'" : " " + x)
+        .collect(java.util.stream.Collectors.joining());
     if (!COMMANDS.contains(cmd)) {
       err.println("m65: unknown command '" + cmd + "' (m65 help lists the commands)");
       return 1;
@@ -539,7 +542,7 @@ public final class M65fs {
     CopyLine progress = !f.contains('v') ? null : new CopyLine(out, "'-' -> '" + target + "'", liveProgress(),
         () -> to == null ? 0 : to.bytesWritten() - w0,
         () -> to != null && counted.eof ? counted.count : 0);
-    copying(progress, "-", target, () -> writeTarget(counted, target));
+    copying(progress, "-", target, to, () -> writeTarget(counted, target));
   }
 
   /** Counts what it reads; {@code eof} once the end was reached. */
@@ -595,7 +598,9 @@ public final class M65fs {
   /** As above; {@code line} (if not null) is printed first, with progress while copying. */
   private void copyFile(Path src, Path target, Set<Character> f, String line) throws IOException {
     CopyLine progress = line == null ? null : copyLine(src, target, line);
-    copying(progress, src.toString(), target, () -> {
+    Mega65FileSystem card = target.getFileSystem() instanceof Mega65FileSystem m ? m
+        : src.getFileSystem() instanceof Mega65FileSystem m ? m : null;
+    copying(progress, src.toString(), target, card, () -> {
       writeTarget(Files.newInputStream(src), target);
       if (f.contains('p')) {
         Files.setLastModifiedTime(target, Files.getLastModifiedTime(src));
@@ -610,9 +615,15 @@ public final class M65fs {
   /**
    * Runs a copy and ends its line ({@code progress}, may be null): plain when done,
    * {@code failed} on an error (reported after it), {@code interrupted} on Ctrl-C; without a
-   * line an interruption is reported on stderr, so it never looks like it completed.
+   * line an interruption is reported on stderr, so it never looks like it completed. The MEGA65
+   * ({@code card}, may be null) shows the line too, with or without {@code -v}.
    */
-  private void copying(CopyLine progress, String src, Path target, Copy copy) throws IOException {
+  private void copying(CopyLine progress, String src, Path target, Mega65FileSystem card, Copy copy)
+      throws IOException {
+    String text = "'" + src + "' -> '" + target + "'";
+    if (card != null) {
+      card.showOnMega65(text, Mega65FileSystem.LineKind.INFO, false);
+    }
     Runnable report = () -> {
       err.println(prog + ": interrupted: '" + src + "' -> '" + target + "' not completed");
       err.flush();
@@ -628,6 +639,13 @@ public final class M65fs {
       Interruption.done(report);
       if (progress != null) {
         progress.close(ok ? "" : " failed");
+      }
+      if (card != null && !ok) {
+        try {
+          card.showOnMega65(text + " failed", Mega65FileSystem.LineKind.ERROR, true);
+        } catch (IOException | RuntimeException e) {
+          // the session may be what failed: the error itself is reported
+        }
       }
     }
   }
@@ -1006,6 +1024,7 @@ public final class M65fs {
     return r.equals("1") || r.equalsIgnoreCase("true") || r.equalsIgnoreCase("yes");
   }
 
+  /** Opens the card; the MEGA65 shows the command line on its screen. */
   private Mega65FileSystem openCard(boolean readOnly) throws IOException {
     Map<String, Object> e = new HashMap<>();
     e.put("quitOnClose", resetAfter());
@@ -1015,7 +1034,14 @@ public final class M65fs {
       return Mega65FileSystem.openImage(Path.of(image), e);
     }
     e.put("target", machine());
-    return (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
+    var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
+    try {
+      fs.showOnMega65(commandLine, Mega65FileSystem.LineKind.COMMAND, false);
+    } catch (IOException | RuntimeException ex) {
+      fs.close();
+      throw ex;
+    }
+    return fs;
   }
 
   private void requireMachine() {

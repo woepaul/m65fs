@@ -10,19 +10,28 @@
 ;   $11 memory       read up to 256 bytes at a 28-bit address
 ;   $12 mount        attach a D81 from the root directory as drive 0
 ;   $13 cwd          report (and set) the hypervisor's working directory
+;   $14 text         a line for the log on the helper's screen (m65fs shows what it does)
 ;   $FF quit         answer, then reset into MEGA65 mode
 ; and answers IPv6 neighbor solicitations for its own address.
 ;
 ; Started with the START ethlet's jump mode (no ROM initialisation), at its load address.
-; Runs with interrupts off and needs nothing from the ROM. Copies are done by DMA, UDP
-; checksums with 32-bit additions (ADCQ).
+; Runs with interrupts off and needs nothing from the ROM (except its character set). Copies
+; are done by DMA, UDP checksums with 32-bit additions (ADCQ).
+;
+; The screen (80 x 50) shows the state, statistics (updated every second: requests, KiB read
+; and written, rates) and the lines m65fs sends. The border is red while requests come in and
+; green when the helper is idle: no write batch open, no request for 5 seconds. Then RUN/STOP
+; or ESC quits into MEGA65 mode (BASIC 65).
 ;
 ; Assemble with ACME: acme --cpu m65 -f cbm -o helper.prg helper.a
 
 !cpu m65
 
 ; ---------------------------------------------------------------- memory
-SCREEN  = $0400
+SCREEN  = $3000                 ; 80 x 50 = 4000 bytes
+COLS    = 80
+ROWS    = 50
+CHARSET = $2d800                ; the ROM's lower case character set
 RXLEN   = $1ffe                 ; DMA copy of the RX buffer: 2 length bytes,
 RXBUF   = $2000                 ; then the received frame
 TXBUF   = $2400                 ; reply frame (Ethernet, IPv6, UDP, payload)
@@ -74,6 +83,34 @@ tmp      = $27                  ; 4
 ulen     = $2b                  ; 2: UDP length of the request
 ptr      = $2d                  ; 2
 cmd      = $2f
+n_req    = $30                  ; 4: requests (valid "mreq" datagrams)
+n_rd     = $34                  ; 4: sectors read
+n_wr     = $38                  ; 4: sectors written
+s_req    = $3c                  ; 4: the three counters a second ago
+s_rd     = $40                  ; 4
+s_wr     = $44                  ; 4
+secs     = $48                  ; 4: seconds running
+num      = $4c                  ; 4: number to print
+bcd      = $50                  ; 5: num in BCD
+lead     = $55                  ; bit 7: a digit was printed
+frame    = $56                  ; frame counter ($D7FA) at the last second
+fps      = $57                  ; frames per second (50 PAL, 60 NTSC)
+idle     = $58                  ; seconds since the last request (up to 255)
+tlen     = $59                  ; text: length
+
+; ---------------------------------------------------------------- screen layout
+!macro at .row, .col {
+        !word SCREEN + .row * COLS + .col
+}
+IDLE_SECS  = 5                  ; idle: border green, RUN/STOP quits
+ROW_STATUS = 2
+ROW_STATS  = 4                  ; requests, read, written, running
+ROW_LINE   = 9
+ROW_LOG    = 10                 ; host lines up to the last row
+LOG        = SCREEN + ROW_LOG * COLS
+LOG_LAST   = SCREEN + (ROWS - 1) * COLS
+COL_TOTAL  = 12                 ; numbers: 10 digits
+COL_RATE   = 30
 
 ; ---------------------------------------------------------------- macros
 !macro hyppo .call {
@@ -128,8 +165,17 @@ entry:
                                 ; hypervisors; others just fail)
         jsr init_screen
         jsr init_frames
+        lda #50
+        bit $d06f               ; bit 7: NTSC
+        bpl +
+        lda #60
++       sta fps
+        lda $d7fa
+        sta frame
 
-main:   lda $d6e1
+main:   jsr tick
+        jsr keys
+        lda $d6e1
         and #$20                ; frame received?
         beq main
         lda #$01                ; acknowledge it, show it in the RX buffer
@@ -208,7 +254,13 @@ dispatch:
         and csum + 1
         cmp #$ff
         bne .out                ; wrong checksum (or a frame with a CRC error): dropped
-        inc SCREEN + 39         ; activity
+        ldq n_req
+        inq
+        stq n_req
+        ldz #$00
+        stz idle                ; a request: not idle
+        lda #2                  ; border red: busy
+        sta $d020
         lda RXBUF + F_OP
         cmp #$fd
         lbeq op_hello
@@ -227,6 +279,8 @@ dispatch:
         lbeq op_mount
         cmp #$13
         lbeq op_cwd
+        cmp #$14
+        lbeq op_text
         cmp #$ff
         lbeq op_quit
         rts
@@ -287,7 +341,13 @@ op_quit:
         bne -
         dey
         bne -
-        ; reset into MEGA65 mode, as the START ethlet does
+quit65:                         ; from the keyboard: wait until the key is released (the ROM
+        jsr wait_keys           ; starts its monitor if RUN/STOP is down at the reset)
+reset65:                        ; reset into MEGA65 mode, as the START ethlet does
+        lda #$80                ; the VIC as after power-on: hot registers on, 40 x 25 (the
+        tsb $d05d               ; ROM sets up its screen from there)
+        lda #$00
+        sta $d031
         lda #$00
         ldx #$0f
         tay
@@ -476,6 +536,10 @@ op_read:
         lda #>525
         sta plen + 1
         jsr send
+        ldq n_rd
+        inq
+        stq n_rd
+        ldz #$00
         inc TXBUF + F_SEQ       ; consecutive sequence numbers
         bne +
         inc TXBUF + F_SEQ + 1
@@ -518,6 +582,7 @@ op_write:
         jsr sd_sector
         lda #$03                ; single sector write
         jsr sd_write
+        jsr count_wr
         jsr sd_wait
         jsr sd_read_tmp         ; read back and compare
         jsr sd_wait
@@ -630,8 +695,9 @@ flush:  ldx b_written
         jsr sd_sector
         lda #$04                ; start
 +       jsr sd_write
+        jsr count_wr
         inc b_written
-        bra flush
+        lbra flush
 .done:  lda #$00                ; complete: read back and compare
         sta b_active
         sta cmd                 ; slot
@@ -664,6 +730,13 @@ flush:  ldx b_written
         inc cmd
         bra .verify
 .wait:  rts
+
+count_wr:
+        ldq n_wr
+        inq
+        stq n_wr
+        ldz #$00
+        rts
 
 ; carry set if the request's batch counter is older than the current one (late duplicate)
 outdated:
@@ -935,6 +1008,14 @@ checksum:
 +       rts
 
 ; ---------------------------------------------------------------- DMA
+dma_fill:                       ; dma_len bytes at dma_dst := low byte of dma_src
+        lda #$03
+        sta dc_cmd
+        jsr dma_copy
+        lda #$00
+        sta dc_cmd
+        rts
+
 dma_copy512:
         lda #<512
         ldx #>512
@@ -991,7 +1072,7 @@ dc_srcmb:
 dc_dstmb:
         !byte $00
         !byte $00               ; end of options
-        !byte $00               ; copy
+dc_cmd: !byte $00               ; copy (or fill)
 dc_len: !word $0000
 dc_src: !word $0000
 dc_srcbank:
@@ -1005,13 +1086,66 @@ dc_dstbank:
 
 ; ---------------------------------------------------------------- screen and frames
 init_screen:
+        ; 80 x 50 text: with the hot registers on the VIC-IV derives the geometry (columns,
+        ; rows, line step, borders) from the legacy registers; then our own screen and
+        ; character set, with the hot registers off so that they stay
+        lda #$80
+        tsb $d05d
+        lda #$1b                ; text, display on, 25 rows (VIC-II view)
+        sta $d011
+        lda #$c8                ; 40 columns, no multicolour
+        sta $d016
+        lda #$c8                ; H640, FAST, V400
+        sta $d031
         lda #$00
+        sta $d015               ; no sprites
         sta $d020
         sta $d021
+        lda #$87                ; no 16-bit characters, full colour or alpha blending
+        trb $d054
+        ldx #$00                ; let the VIC take it over
+-       dex
+        bne -
+        lda #$80
+        trb $d05d
+        lda #<SCREEN
+        sta $d060
+        lda #>SCREEN
+        sta $d061
+        lda #$00
+        sta $d062
+        sta $d064               ; colour RAM from its start
+        sta $d065
+        lda #$0f
+        trb $d063
+        lda #<CHARSET
+        sta $d068
+        lda #>CHARSET
+        sta $d069
+        lda #^CHARSET
+        sta $d06a
+        ; the screen of an earlier helper (each tool starts the helper again): its log stays
+        ldx #title_end - title - 1
+-       lda title,x
+        ora #$80
+        cmp SCREEN + 1,x
+        bne +
+        dex
+        bpl -
+        lda #<(ROW_LOG * COLS)  ; found: clear only the rows above the log
+        ldx #>(ROW_LOG * COLS)
+        bra ++
++       lda #<(ROWS * COLS)
+        ldx #>(ROWS * COLS)
+++      sta clr_screen
+        sta clr_colour
+        stx clr_screen + 1
+        stx clr_colour + 1
         sta $d707               ; spaces on the screen, green text
         !byte $0b, $81, $00, $00
         !byte $07               ; fill, chained
-        !word 1000              ; count
+clr_screen:
+        !word COLS * ROWS       ; count
         !word $0020             ; fill value
         !byte $00
         !word SCREEN
@@ -1019,55 +1153,393 @@ init_screen:
         !byte $00
         !word $0000
         !byte $81, (COLRAM >> 20) & $ff, $00
-        !byte $03               ; fill
-        !word 1000
+        !byte $07               ; fill, chained
+clr_colour:
+        !word COLS * ROWS
         !word $0005
         !byte $00
         !word COLRAM & $ffff
         !byte (COLRAM >> 16) & $0f
         !byte $00
         !word $0000
-        ldx #0
--       lda title,x
-        sta SCREEN + 41,x
+        !byte $00
+        !byte $03               ; fill: the title row white
+        !word COLS
+        !word $0001
+        !byte $00
+        !word COLRAM & $ffff
+        !byte (COLRAM >> 16) & $0f
+        !byte $00
+        !word $0000
+        ldx #COLS - 1           ; title row reversed, separator line above the log
+-       lda #$a0
+        sta SCREEN,x
+        lda #$40
+        sta SCREEN + ROW_LINE * COLS,x
+        dex
+        bpl -
+        ldx #0                  ; texts: address, [$80 = reversed,] screen codes, 0;
+.text:  lda texts,x             ; address 0 ends
+        sta ptr
+        lda texts + 1,x
+        beq +++
+        sta ptr + 1
         inx
-        cpx #title_end - title
-        bne -
+        inx
+        lda #$00
+        sta lead
+        lda texts,x
+        cmp #$80
+        bne +
+        sta lead
+        inx
++       ldy #0
+-       lda texts,x
+        inx
+        cmp #0
+        beq .text
+        ora lead
+        sta (ptr),y
+        iny
+        bra -
++++     jsr show_stats
         ldx #msg_waiting - msgs
         ; fall through
 
-status:                         ; message X (offset in msgs) on line 3
+status:                         ; message X (offset in msgs) in the status row
         ldy #0
 -       lda msgs,x
         beq +
-        sta SCREEN + 121,y
+        sta SCREEN + ROW_STATUS * COLS + COL_TOTAL,y
         inx
         iny
         bra -
 +       lda #' '
--       cpy #38
+-       cpy #COLS - COL_TOTAL
         beq +
-        sta SCREEN + 121,y
+        sta SCREEN + ROW_STATUS * COLS + COL_TOTAL,y
         iny
         bra -
 +       rts
 
 fatal:  jsr status              ; message X, then stop: the host notices the silence
+        ldx #fatal_end - fatal_text - 1
+-       lda fatal_text,x
+        sta SCREEN + ROW_STATUS * COLS + COLS - (fatal_end - fatal_text),x
+        dex
+        bpl -
+-       lda $d7fa               ; border blinks red: stopped (steady red: busy)
+        and #$20
+        beq +
         lda #2
-        sta $d020
--       bra -
++       sta $d020
+        lda $d610               ; RUN/STOP or ESC: reset
+        beq -
+        sta $d610
+        cmp #$03
+        lbeq quit65
+        cmp #$1b
+        lbeq quit65
+        bra -
+
+fatal_text:
+        !scr "run/stop: reset"
+fatal_end:
 
 title:  !scr "m65fs transfer helper"
 title_end:
+
+texts:  +at 0, 1
+        !scr $80, "m65fs transfer helper", 0
+        +at 0, COLS - 31
+        !scr $80, "run/stop: quit to basic (idle)", 0
+        +at ROW_STATUS, 1
+        !scr "status", 0
+        +at ROW_STATS, 1
+        !scr "requests", 0
+        +at ROW_STATS, COL_RATE + 11
+        !scr "/s", 0
+        +at ROW_STATS + 1, 1
+        !scr "read", 0
+        +at ROW_STATS + 1, COL_TOTAL + 11
+        !scr "KiB", 0
+        +at ROW_STATS + 1, COL_RATE + 11
+        !scr "KiB/s", 0
+        +at ROW_STATS + 2, 1
+        !scr "written", 0
+        +at ROW_STATS + 2, COL_TOTAL + 11
+        !scr "KiB", 0
+        +at ROW_STATS + 2, COL_RATE + 11
+        !scr "KiB/s", 0
+        +at ROW_STATS + 3, 1
+        !scr "running", 0
+        +at ROW_STATS + 3, COL_TOTAL + 11
+        !scr "s", 0
+        !word 0
+
 msgs:
 msg_waiting:   !scr "waiting for the host", 0
 msg_connected: !scr "connected", 0
+msg_busy:      !scr "busy: press run/stop again when idle", 0
+msg_quit:      !scr "quit", 0
 msg_mixed:     !scr "error: read during a write batch", 0
 msg_conflict:  !scr "error: single write during a batch", 0
 msg_slot:      !scr "error: batch slot out of range", 0
 msg_duplicate: !scr "error: duplicate with other data", 0
 msg_verify:    !scr "error: sector verification failed", 0
 msg_nomac:     !scr "error: no mac address configured", 0
+
+; ---------------------------------------------------------------- keyboard, statistics
+; RUN/STOP or ESC: quit into MEGA65 mode when idle
+keys:   lda $d610               ; hardware keyboard queue (ASCII), 0 = empty
+        beq .krts
+        sta $d610               ; take it out
+        cmp #$03
+        beq +
+        cmp #$1b
+        bne .krts
++       jsr is_idle
+        bcc +
+        ldx #msg_quit - msgs
+        jsr status
+        jmp quit65
++       ldx #msg_busy - msgs
+        jmp status
+.krts:  rts
+
+; until no key of the keyboard matrix has been down for about 50 ms (CIA 1), then an empty
+; keyboard queue
+wait_keys:
+        lda #$ff                ; port A drives the columns, port B reads the rows
+        sta $dc02
+        lda #$00
+        sta $dc03
+        sta $dc00               ; all columns
+.wk_restart:
+        ldy #100                ; 100 x ~0.5 ms without a key
+.wk_check:
+        lda $dc01
+        cmp #$ff
+        bne .wk_restart
+        ldx #$00                ; ~0.5 ms at 40 MHz: 32 x 256 loops
+        ldz #$20
+.wk_delay:
+        dex
+        bne .wk_delay
+        dez
+        bne .wk_delay
+        dey
+        bne .wk_check
+        ldz #$00
+-       lda $d610               ; and whatever is still queued
+        beq +
+        sta $d610
+        bra -
++       rts
+
+; carry set if idle: no write batch open, no request for IDLE_SECS seconds (the requests
+; per second shown were 0 that many times in a row)
+is_idle:
+        lda b_active
+        bne +
+        lda idle
+        cmp #IDLE_SECS
+        rts
++       clc
+        rts
+
+; once a second: the statistics
+tick:   lda $d7fa
+        sec
+        sbc frame
+        cmp fps
+        bcc .krts
+        lda frame
+        clc
+        adc fps
+        sta frame
+        inc idle
+        bne +
+        dec idle                ; stays at 255
++       jsr is_idle
+        bcc +
+        lda #5                  ; border green: idle
+        sta $d020
++       ldq secs
+        inq
+        stq secs
+        ldz #$00
+        ; fall through
+
+show_stats:
+        ldq n_req
+        stq num
+        ldz #$00
+        lda #<(SCREEN + ROW_STATS * COLS + COL_TOTAL)
+        ldx #>(SCREEN + ROW_STATS * COLS + COL_TOTAL)
+        jsr print_num
+        ldq n_req               ; requests in the last second
+        sec
+        sbcq s_req
+        stq num
+        ldq n_req
+        stq s_req
+        ldz #$00
+        lda #<(SCREEN + ROW_STATS * COLS + COL_RATE)
+        ldx #>(SCREEN + ROW_STATS * COLS + COL_RATE)
+        jsr print_num
+        ldq n_rd                ; sectors / 2 = KiB
+        lsrq
+        stq num
+        ldz #$00
+        lda #<(SCREEN + (ROW_STATS + 1) * COLS + COL_TOTAL)
+        ldx #>(SCREEN + (ROW_STATS + 1) * COLS + COL_TOTAL)
+        jsr print_num
+        ldq n_rd
+        sec
+        sbcq s_rd
+        lsrq
+        stq num
+        ldq n_rd
+        stq s_rd
+        ldz #$00
+        lda #<(SCREEN + (ROW_STATS + 1) * COLS + COL_RATE)
+        ldx #>(SCREEN + (ROW_STATS + 1) * COLS + COL_RATE)
+        jsr print_num
+        ldq n_wr
+        lsrq
+        stq num
+        ldz #$00
+        lda #<(SCREEN + (ROW_STATS + 2) * COLS + COL_TOTAL)
+        ldx #>(SCREEN + (ROW_STATS + 2) * COLS + COL_TOTAL)
+        jsr print_num
+        ldq n_wr
+        sec
+        sbcq s_wr
+        lsrq
+        stq num
+        ldq n_wr
+        stq s_wr
+        ldz #$00
+        lda #<(SCREEN + (ROW_STATS + 2) * COLS + COL_RATE)
+        ldx #>(SCREEN + (ROW_STATS + 2) * COLS + COL_RATE)
+        jsr print_num
+        ldq secs
+        stq num
+        ldz #$00
+        lda #<(SCREEN + (ROW_STATS + 3) * COLS + COL_TOTAL)
+        ldx #>(SCREEN + (ROW_STATS + 3) * COLS + COL_TOTAL)
+        ; fall through
+
+; num as 10 decimal digits, right aligned, at A/X
+print_num:
+        sta ptr
+        stx ptr + 1
+        lda #$00
+        ldx #4
+-       sta bcd,x
+        dex
+        bpl -
+        sta lead
+        ldx #32                 ; binary -> BCD: shift in bit by bit, doubling in decimal
+        sed
+--      asl num
+        rol num + 1
+        rol num + 2
+        rol num + 3
+        lda bcd                 ; (no compare in between: the carry goes through)
+        adc bcd
+        sta bcd
+        lda bcd + 1
+        adc bcd + 1
+        sta bcd + 1
+        lda bcd + 2
+        adc bcd + 2
+        sta bcd + 2
+        lda bcd + 3
+        adc bcd + 3
+        sta bcd + 3
+        lda bcd + 4
+        adc bcd + 4
+        sta bcd + 4
+        dex
+        bne --
+        cld
+        ldy #0
+        ldx #4
+-       lda bcd,x
+        lsr
+        lsr
+        lsr
+        lsr
+        jsr .digit
+        lda bcd,x
+        and #$0f
+        jsr .digit
+        dex
+        bpl -
+        rts
+.digit: bne +                   ; leading zeros as spaces, but always the last digit
+        bit lead
+        bmi +
+        cpy #9
+        beq +
+        lda #' '
+        bra ++
++       ora #'0'
+        pha
+        lda #$80
+        sta lead
+        pla
+++      sta (ptr),y
+        iny
+        rts
+
+; ---------------------------------------------------------------- host lines
+; $14 text: colour, mode (0 = new line, 1 = replace the last line), up to 80 screen codes.
+; Answer: the header only.
+op_text:
+        lda ulen + 1
+        lbne .trts
+        lda ulen                ; UDP length 17 + text length
+        sec
+        sbc #17
+        lbcc .trts
+        cmp #COLS + 1
+        lbcs .trts
+        sta tlen
+        lda RXBUF + F_ARG + 1
+        bne +
+        ; new line: the log up one row (screen and colours)
+        +copy LOG + COLS, LOG, (ROWS - ROW_LOG - 1) * COLS
+        +copy COLRAM + ROW_LOG * COLS + COLS, COLRAM + ROW_LOG * COLS, (ROWS - ROW_LOG - 1) * COLS
++       ldx #0
+-       cpx tlen
+        bcs +
+        lda RXBUF + F_ARG + 2,x
+        sta LOG_LAST,x
+        inx
+        bra -
++       lda #' '
+-       cpx #COLS
+        beq +
+        sta LOG_LAST,x
+        inx
+        bra -
++       lda RXBUF + F_ARG       ; colour of the line
+        ldx #$00
+        ldy #$00
+        ldz #$00
+        stq dma_src
+        +set32 dma_dst, COLRAM + (ROWS - 1) * COLS
+        lda #<COLS
+        ldx #>COLS
+        sta dma_len
+        stx dma_len + 1
+        jsr dma_fill
+        lda #7
+        jmp reply
+.trts:  rts
 
 ; own address from the MAC; the constant parts of the reply and advertisement frames
 init_frames:

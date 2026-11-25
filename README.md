@@ -87,8 +87,10 @@ code, bundled in the jar and in the binary.
 For files, m65fs talks to the MEGA65 the way `mega65_ftp -e` does:
 
 1. **Bootstrap.** A trigger packet puts the MEGA65 hypervisor into Ethernet remote control.
-   Small 45GS02 programs ("ethlets") then upload the transfer helper `helper.prg` (2.7 KB)
-   and start it.
+   Small 45GS02 programs ("ethlets") then upload the transfer helper `helper.prg` (3.7 KB)
+   and start it. Its 80 x 50 screen shows statistics (requests, KiB read and written per
+   second) and a log of what the tools do: each command line and the `'src' -> 'dst'` line of
+   every copied file. RUN/STOP quits it into BASIC 65 when it is idle.
 2. **Session.** The helper serves raw SD card sectors over UDP (IPv6 link-local, port 4510).
    The library sends requests through a sliding window with retransmission.
 3. **FAT32 on the PC.** All file system logic runs in Java: MBR, FAT32, VFAT long names and

@@ -11,6 +11,18 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   tree (on a test card: 4 instead of 196 requests to the MEGA65). Directories whose content is
   cut off by `-L` therefore show no totals, and the summary counts what was read, e.g.
   `6 directories, 23 files, 6.3 MiB (to level 1)`. Without `-L` the output is unchanged.
+- The transfer helper's screen: 80 x 50 instead of a few lines in 40 columns. It shows the
+  state, statistics (requests, KiB read and written, each per second, and the time running)
+  and a log of what the tools do: the command line (white) and the `'src' -> 'dst'` line of
+  every copied file (green, also without `-v`; red with `failed`), and the files
+  `m65.defrag --fix` moves. The log survives the next command (each one starts the helper
+  again). A copied file costs one round trip more for its line.
+- The helper's border shows its state: red while requests come in, green when idle (then
+  RUN/STOP works), blinking red after a fatal error.
+- RUN/STOP (or ESC) on the MEGA65 quits the transfer helper into BASIC 65 when it is idle (no
+  write batch open, no request for 5 seconds). After a fatal helper error the same keys reset.
+- Library: `Mega65FileSystem.showOnMega65(line, kind, replace)` shows a line in that log;
+  helper request `$14` (`Request.Text`, `RemoteSdSession.showText`).
 
 ## 0.1.3 (2026-11-25)
 

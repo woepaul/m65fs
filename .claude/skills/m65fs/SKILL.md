@@ -97,7 +97,9 @@ line, or a message on stderr; defrag tells how many files it finished).
 ## How the tools affect the MEGA65
 
 - **Every tool takes over the machine.** It starts the transfer helper, which replaces whatever
-  was running. Afterwards the MEGA65 shows the transfer screen (or resets, with `M65_RESET=1`).
+  was running. Afterwards the MEGA65 shows the transfer screen (or resets, with `M65_RESET=1`):
+  statistics and a log of the commands and copied files; RUN/STOP there quits into BASIC 65
+  when nothing is being transferred.
   `m65.boot`, `m65.run` and `m65.reset` leave it running the new program or BASIC. If the user
   might be in the middle of something on the MEGA65, ask first. When done with file work, run
   `m65.reset` (or boot or run something) so the user gets the machine back.

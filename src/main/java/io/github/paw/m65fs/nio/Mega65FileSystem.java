@@ -12,6 +12,7 @@ import io.github.paw.m65fs.launch.MachineMode;
 import io.github.paw.m65fs.launch.Mega65Launcher;
 import io.github.paw.m65fs.remotesd.RemoteSdBlockDevice;
 import io.github.paw.m65fs.remotesd.RemoteSdSession;
+import io.github.paw.m65fs.remotesd.Request;
 import io.github.paw.m65fs.transport.Mega65Locator;
 import io.github.paw.m65fs.transport.Target;
 import java.io.IOException;
@@ -386,6 +387,36 @@ public final class Mega65FileSystem extends FileSystem {
       LOG.log(Level.DEBUG, "hypervisor working directory (cluster {0}) not found ({1}); changing to the root",
           cwd.get().cluster(), e.getMessage());
       session.changeWorkingDirectory(List.of());
+    }
+  }
+
+  /** How a line on the MEGA65's screen looks (see {@link #showOnMega65}). */
+  public enum LineKind {
+    /** The command being run (white). */
+    COMMAND(Request.Text.WHITE),
+    /** What is being done (green). */
+    INFO(Request.Text.GREEN),
+    /** Something that went wrong (red). */
+    ERROR(Request.Text.RED);
+
+    final int colour;
+
+    LineKind(int colour) {
+      this.colour = colour;
+    }
+  }
+
+  /**
+   * Shows a line in the log on the transfer helper's screen (80 columns; longer lines show
+   * their end), so that the MEGA65 tells what is being done to its card. One round trip; does
+   * nothing for image files.
+   *
+   * @param replace replace the last line (e.g. to append a result) instead of adding one
+   */
+  public void showOnMega65(String line, LineKind kind, boolean replace) throws IOException {
+    ensureOpen();
+    if (session != null) {
+      session.showText(new Request.Text(kind.colour, replace, line));
     }
   }
 

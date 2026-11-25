@@ -79,6 +79,8 @@ public final class Defrag {
     env.put("readOnly", !fix);
     try (FileSystem opened = open(target, image, env)) {
       var fs = (Mega65FileSystem) opened;
+      fs.showOnMega65("m65.defrag" + String.join("", java.util.Arrays.stream(args).map(a -> " " + a).toList()),
+          Mega65FileSystem.LineKind.COMMAND, false);
       out.println("scanning " + fs + (dir.equals("/") ? "" : dir) + " ...");
       Defragmenter.Report report = Defragmenter.scan(fs, fs.getPath(dir));
       out.printf("%d files in %d directories%n", report.filesScanned(), report.directoriesScanned());
@@ -116,6 +118,7 @@ public final class Defrag {
           public void starting(Path path, long size) {
             // a file is read and written once: progress counts both against twice its size
             long base = fs.bytesRead() + fs.bytesWritten();
+            show("defrag " + path, Mega65FileSystem.LineKind.INFO, false);
             line = new CopyLine(out, "  " + path, live, () -> fs.bytesRead() + fs.bytesWritten() - base, 2 * size)
                 .interruptedSuffix(": interrupted");
           }
@@ -123,12 +126,24 @@ public final class Defrag {
           @Override
           public void deferred(Path path) {
             line.close(": no contiguous space yet, retried at the end");
+            show("defrag " + path + ": no space yet, retried at the end", Mega65FileSystem.LineKind.INFO, true);
           }
 
           @Override
           public void finished(Defragmenter.Result r) {
             line.close(": " + r.outcomeText());
+            show("defrag " + r.path() + ": " + r.outcomeText(), r.outcome() == Defragmenter.Outcome.DEFRAGMENTED
+                ? Mega65FileSystem.LineKind.INFO : Mega65FileSystem.LineKind.ERROR, true);
             finished[0]++;
+          }
+
+          /** The same on the MEGA65's screen. */
+          private void show(String text, Mega65FileSystem.LineKind kind, boolean replace) {
+            try {
+              fs.showOnMega65(text, kind, replace);
+            } catch (IOException e) {
+              throw new java.io.UncheckedIOException(e);
+            }
           }
         });
       } finally {

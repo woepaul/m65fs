@@ -14,6 +14,9 @@ public sealed interface Response {
 
   record QuitAck(int seq) implements Response {}
 
+  /** The helper shows the line of a {@link Request.Text}. */
+  record TextAck(int seq) implements Response {}
+
   /** One sector of a read request. */
   record SectorData(int seq, long sector, ByteBuffer data) implements Response {}
 
@@ -44,6 +47,7 @@ public sealed interface Response {
     Response r = switch (op) {
       case Request.OP_HELLO -> len == 7 ? new HelloAck(seq) : null;
       case Request.OP_QUIT -> len == 7 ? new QuitAck(seq) : null;
+      case Request.OP_TEXT -> len == 7 ? new TextAck(seq) : null;
       case Request.OP_READ_SECTORS -> len == 13 + BlockDevice.SECTOR_SIZE
           ? new SectorData(seq, WindowProtocol.le32(b, 9), b.slice(13, BlockDevice.SECTOR_SIZE).asReadOnlyBuffer())
           : null;

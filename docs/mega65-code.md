@@ -95,12 +95,29 @@ BASIC's handler. If the ROM still points at the hook (an attempt whose hook neve
 handler address saved then (at $2C7F0) is kept instead of saving the hook's own address.
 Works with a disk attached, too.
 
-## Transfer helper (`helper.prg`, 2.7 KB)
+## Transfer helper (`helper.prg`, 3.7 KB)
 
 Loaded to $0800 with LOAD packets and started with START's jump mode (no ROM initialisation,
 so a file command needs no reset). It switches to the MEGA65 I/O personality and 40 MHz, runs
-with interrupts off and uses nothing from the ROM. On start it returns to the working directory
-the trigger saved (`$4C`).
+with interrupts off and uses nothing from the ROM except its lower case character set
+($2D800). On start it returns to the working directory the trigger saved (`$4C`).
+
+**Screen.** 80 x 50 text at $3000: the VIC-IV derives the geometry from the legacy registers
+with its hot registers on (`$D031` = H640, FAST, V400), then the helper sets its own screen
+and character set pointers with the hot registers off. Rows: title (reversed), status, the
+statistics (requests, KiB read and written, each with its rate over the last second, and the
+seconds running; updated once a second from the frame counter `$D7FA`), a line, and from row 10
+a scrolling log of the lines the host sends (`$14`). Each tool starts the helper again: if its
+title is still in screen memory, the log rows (screen and colour RAM) are kept.
+
+**Border.** Red as soon as a request arrives, green when the helper is idle (no write batch
+open, no request for 5 seconds), blinking red after a fatal error.
+
+**Keyboard.** RUN/STOP or ESC (from the hardware queue `$D610`) quits into MEGA65 mode when
+the helper is idle: no write batch open and no request for 5 seconds; otherwise the status row
+says so. After a fatal error the same keys reset the machine. Before the reset the hot
+registers are switched on again and `$D031` is cleared, so the ROM starts from the power-on
+state of the VIC.
 
 The protocol is remotesd_eth's (`"mreq"` / `"mrsp"`, sequence number, opcode over UDP port
 4510), restricted to what `RemoteSdSession` uses:
@@ -113,6 +130,7 @@ The protocol is remotesd_eth's (`"mreq"` / `"mrsp"`, sequence number, opcode ove
 | $11 memory | up to 256 bytes at a 28-bit address | the bytes |
 | $12 mount | D81 name (changes to the root directory) | status |
 | $13 cwd | get, or set from a path | status, drive, cluster |
+| $14 text | colour, mode (0 = new line, 1 = replace the last one), up to 80 screen codes | header |
 | $FF quit | | header, then a reset into MEGA65 mode |
 
 It also answers IPv6 neighbor solicitations for its own address (without that, the computer
