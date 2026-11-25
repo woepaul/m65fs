@@ -107,8 +107,13 @@ with its hot registers on (`$D031` = H640, FAST, V400), then the helper sets its
 and character set pointers with the hot registers off. Rows: title (reversed), status, the
 statistics (requests, KiB read and written, each with its rate over the last second, and the
 seconds running; updated once a second from the frame counter `$D7FA`), a line, and from row 10
-a scrolling log of the lines the host sends (`$14`). Each tool starts the helper again: if its
-title is still in screen memory, the log rows (screen and colour RAM) are kept.
+a log of the lines the host sends (`$14`). The log fills from the top; when it is full, it
+scrolls one row per line (DMA, started below the log, i.e. in the bottom border or vertical
+blank, so that no frame shows it half scrolled). Each tool starts the helper again: if its
+title is still in screen memory, the log rows (screen and colour RAM) and the next free row
+(at $3FA0, right after the screen) are kept, and if the VIC still shows that screen it is not
+set up again. (The Ethernet trigger itself switches the VIC to a 40-column C64 screen,
+`task_set_c64_memorymap` in Hyppo, so the screen still jolts once when a tool starts.)
 
 **Border.** Red as soon as a request arrives, green when the helper is idle (no write batch
 open, no request for 5 seconds), blinking red after a fatal error.

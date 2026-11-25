@@ -414,9 +414,17 @@ public final class Mega65FileSystem extends FileSystem {
    * @param replace replace the last line (e.g. to append a result) instead of adding one
    */
   public void showOnMega65(String line, LineKind kind, boolean replace) throws IOException {
+    showOnMega65(line, kind, replace, 0);
+  }
+
+  /**
+   * As above; a line too long for a row keeps its first {@code keep} characters (e.g. a command
+   * name) and shows its end after {@code "..."}.
+   */
+  public void showOnMega65(String line, LineKind kind, boolean replace, int keep) throws IOException {
     ensureOpen();
     if (session != null) {
-      session.showText(new Request.Text(kind.colour, replace, line));
+      session.showText(new Request.Text(kind.colour, replace, keep, line));
     }
   }
 

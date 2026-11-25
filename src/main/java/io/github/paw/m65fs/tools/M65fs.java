@@ -7,6 +7,7 @@ import io.github.paw.m65fs.launch.Mega65Launcher;
 import io.github.paw.m65fs.nio.Mega65FileAttributes;
 import io.github.paw.m65fs.nio.Mega65FileStore;
 import io.github.paw.m65fs.nio.Mega65FileSystem;
+import io.github.paw.m65fs.remotesd.Request;
 import io.github.paw.m65fs.transport.Mega65Locator;
 import io.github.paw.m65fs.transport.Target;
 import java.io.IOException;
@@ -71,7 +72,9 @@ public final class M65fs {
   private boolean stdinUsed;
   private final Map<String, String> env;
   private String prog = "m65";
-  private String commandLine = "m65";
+  private String commandName = "";
+  /** The command line for the MEGA65's screen: without "m65." (cp -v a m65:/), to save room. */
+  private String commandLine = "";
   private int status;
 
   private M65fs(Map<String, String> env, InputStream in, PrintStream out, PrintStream err) {
@@ -161,7 +164,8 @@ public final class M65fs {
     }
     String cmd = a.removeFirst();
     prog = "m65." + cmd;
-    commandLine = prog + a.stream().map(x -> x.isEmpty() || x.contains(" ") ? " '" + x + "'" : " " + x)
+    commandName = cmd;
+    commandLine = cmd + a.stream().map(x -> x.isEmpty() || x.contains(" ") ? " '" + x + "'" : " " + x)
         .collect(java.util.stream.Collectors.joining());
     if (!COMMANDS.contains(cmd)) {
       err.println("m65: unknown command '" + cmd + "' (m65 help lists the commands)");
@@ -621,8 +625,11 @@ public final class M65fs {
   private void copying(CopyLine progress, String src, Path target, Mega65FileSystem card, Copy copy)
       throws IOException {
     String text = "'" + src + "' -> '" + target + "'";
+    // on the MEGA65 with the command in front: cp '.../file' -> '/DIR/file'
+    String cmd = commandName + " ";
     if (card != null) {
-      card.showOnMega65(text, Mega65FileSystem.LineKind.INFO, false);
+      card.showOnMega65(cmd + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - cmd.length()),
+          Mega65FileSystem.LineKind.INFO, false, cmd.length());
     }
     Runnable report = () -> {
       err.println(prog + ": interrupted: '" + src + "' -> '" + target + "' not completed");
@@ -642,12 +649,37 @@ public final class M65fs {
       }
       if (card != null && !ok) {
         try {
-          card.showOnMega65(text + " failed", Mega65FileSystem.LineKind.ERROR, true);
+          card.showOnMega65(cmd + fitCopyLine(src, target.toString(), Request.Text.COLUMNS - cmd.length()
+              - " failed".length()) + " failed", Mega65FileSystem.LineKind.ERROR, true, cmd.length());
         } catch (IOException | RuntimeException e) {
           // the session may be what failed: the error itself is reported
         }
       }
     }
+  }
+
+  /**
+   * {@code 'src' -> 'dst'} in at most {@code width} characters (the MEGA65's screen): a path
+   * that does not fit loses its start ({@code '.../dir/file'}), so that both file names stay;
+   * the source (usually the long path on the computer) gives way first.
+   */
+  static String fitCopyLine(String src, String dst, int width) {
+    int frame = "'' -> ''".length();
+    if (src.length() + dst.length() + frame <= width) {
+      return "'" + src + "' -> '" + dst + "'";
+    }
+    int room = width - frame;
+    int d = Math.min(dst.length(), Math.max(room / 2, room - src.length()));
+    int s = room - d;
+    return "'" + tail(src, s) + "' -> '" + tail(dst, d) + "'";
+  }
+
+  /** The end of {@code p} in {@code n} characters, after "..." if it is shortened. */
+  private static String tail(String p, int n) {
+    if (p.length() <= n) {
+      return p;
+    }
+    return n <= 3 ? "...".substring(0, Math.max(0, n)) : "..." + p.substring(p.length() - (n - 3));
   }
 
   /**
@@ -1036,7 +1068,7 @@ public final class M65fs {
     e.put("target", machine());
     var fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
     try {
-      fs.showOnMega65(commandLine, Mega65FileSystem.LineKind.COMMAND, false);
+      fs.showOnMega65(commandLine, Mega65FileSystem.LineKind.COMMAND, false, commandName.length() + 1);
     } catch (IOException | RuntimeException ex) {
       fs.close();
       throw ex;

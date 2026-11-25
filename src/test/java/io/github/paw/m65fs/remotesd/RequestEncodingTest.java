@@ -112,6 +112,16 @@ class RequestEncodingTest {
   }
 
   @Test
+  void aLongCommandKeepsItsName() {
+    String line = "cp -rv " + "x".repeat(100) + " m65:/END";
+    byte[] p = new Request.Text(1, false, "cp ".length(), line).encode();
+    assertEquals(9 + 80, p.length);
+    assertEquals("CP ...", new String(p, 9, 6, java.nio.charset.StandardCharsets.ISO_8859_1)
+        .replace((char) 3, 'C').replace((char) 16, 'P'));
+    assertEquals("END", new String(p, p.length - 3, 3, java.nio.charset.StandardCharsets.ISO_8859_1));
+  }
+
+  @Test
   void parsesTextAck() {
     byte[] r = {'m', 'r', 's', 'p', 3, 0, 0x14};
     assertEquals(new Response.TextAck(3), Response.parse(ByteBuffer.wrap(r)).orElseThrow());

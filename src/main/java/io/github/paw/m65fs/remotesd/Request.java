@@ -202,8 +202,10 @@ public sealed interface Request {
    *
    * @param colour MEGA65 colour of the line (0..15, e.g. {@link #GREEN})
    * @param replace replace the last line instead of adding one (e.g. to append a result)
+   * @param keep length of a prefix that stays when a long text is shortened (e.g. the command
+   *     name in front of its arguments)
    */
-  record Text(int colour, boolean replace, String text) implements Request {
+  record Text(int colour, boolean replace, int keep, String text) implements Request {
     public static final int COLUMNS = 80;
     public static final int WHITE = 1;
     public static final int RED = 2;
@@ -215,11 +217,18 @@ public sealed interface Request {
       if (colour < 0 || colour > 15) {
         throw new IllegalArgumentException("colour must be 0..15: " + colour);
       }
+      if (keep < 0) {
+        throw new IllegalArgumentException("keep must not be negative: " + keep);
+      }
+    }
+
+    public Text(int colour, boolean replace, String text) {
+      this(colour, replace, 0, text);
     }
 
     @Override
     public byte[] encode() {
-      byte[] codes = screenCodes(text);
+      byte[] codes = screenCodes(text, keep);
       byte[] p = header(HEADER + 2 + codes.length, OP_TEXT);
       p[HEADER] = (byte) colour;
       p[HEADER + 1] = (byte) (replace ? 1 : 0);
@@ -228,21 +237,23 @@ public sealed interface Request {
     }
 
     /**
-     * The text as screen codes of the MEGA65's lower case character set; longer than a row: the
-     * end, after {@code "..."} (paths: the end matters most).
+     * The text as screen codes of the MEGA65's lower case character set. Longer than a row: the
+     * first {@code keep} characters, {@code "..."} and the end (paths: the end matters most).
      */
-    static byte[] screenCodes(String text) {
+    static byte[] screenCodes(String text, int keep) {
       int[] cps = text.codePoints().toArray();
-      int from = cps.length > COLUMNS ? cps.length - (COLUMNS - 3) : 0;
-      byte[] b = new byte[Math.min(cps.length, COLUMNS)];
-      int i = 0;
-      if (from > 0) {
-        b[i++] = '.';
-        b[i++] = '.';
-        b[i++] = '.';
+      int[] shown = cps;
+      if (cps.length > COLUMNS) {
+        int head = Math.min(keep, COLUMNS - 3);
+        int tail = COLUMNS - 3 - head;
+        shown = new int[COLUMNS];
+        System.arraycopy(cps, 0, shown, 0, head);
+        shown[head] = shown[head + 1] = shown[head + 2] = '.';
+        System.arraycopy(cps, cps.length - tail, shown, head + 3, tail);
       }
-      for (int k = from; k < cps.length; k++) {
-        b[i++] = (byte) screenCode(cps[k]);
+      byte[] b = new byte[shown.length];
+      for (int i = 0; i < shown.length; i++) {
+        b[i] = (byte) screenCode(shown[i]);
       }
       return b;
     }

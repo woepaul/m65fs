@@ -13,10 +13,13 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   `6 directories, 23 files, 6.3 MiB (to level 1)`. Without `-L` the output is unchanged.
 - The transfer helper's screen: 80 x 50 instead of a few lines in 40 columns. It shows the
   state, statistics (requests, KiB read and written, each per second, and the time running)
-  and a log of what the tools do: the command line (white) and the `'src' -> 'dst'` line of
-  every copied file (green, also without `-v`; red with `failed`), and the files
-  `m65.defrag --fix` moves. The log survives the next command (each one starts the helper
-  again). A copied file costs one round trip more for its line.
+  and a log of what the tools do: the command line without `m65.` (white, e.g.
+  `cp -rv game m65:/GAMES`) and a line for every copied file (green, also without `-v`; red
+  with `failed`), e.g. `cp '.../game/disk1.d81' -> '/GAMES/game/disk1.d81'`, and the files
+  `m65.defrag --fix` moves. Lines longer than 80 characters keep the command name and lose the
+  start of their paths. The log fills from the top and scrolls when full (in the vertical
+  blank, so that the screen does not jolt); it survives the next command (each one starts the
+  helper again). A copied file costs one round trip more for its line.
 - The helper's border shows its state: red while requests come in, green when idle (then
   RUN/STOP works), blinking red after a fatal error.
 - RUN/STOP (or ESC) on the MEGA65 quits the transfer helper into BASIC 65 when it is idle (no

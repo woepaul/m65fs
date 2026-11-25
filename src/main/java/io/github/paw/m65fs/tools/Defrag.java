@@ -79,8 +79,8 @@ public final class Defrag {
     env.put("readOnly", !fix);
     try (FileSystem opened = open(target, image, env)) {
       var fs = (Mega65FileSystem) opened;
-      fs.showOnMega65("m65.defrag" + String.join("", java.util.Arrays.stream(args).map(a -> " " + a).toList()),
-          Mega65FileSystem.LineKind.COMMAND, false);
+      fs.showOnMega65("defrag" + String.join("", java.util.Arrays.stream(args).map(a -> " " + a).toList()),
+          Mega65FileSystem.LineKind.COMMAND, false, "defrag ".length());
       out.println("scanning " + fs + (dir.equals("/") ? "" : dir) + " ...");
       Defragmenter.Report report = Defragmenter.scan(fs, fs.getPath(dir));
       out.printf("%d files in %d directories%n", report.filesScanned(), report.directoriesScanned());
@@ -140,7 +140,7 @@ public final class Defrag {
           /** The same on the MEGA65's screen. */
           private void show(String text, Mega65FileSystem.LineKind kind, boolean replace) {
             try {
-              fs.showOnMega65(text, kind, replace);
+              fs.showOnMega65(text, kind, replace, "defrag ".length());
             } catch (IOException e) {
               throw new java.io.UncheckedIOException(e);
             }

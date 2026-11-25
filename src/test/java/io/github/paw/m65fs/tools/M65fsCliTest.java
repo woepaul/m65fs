@@ -278,4 +278,17 @@ class M65fsCliTest {
     assertNotEquals(0, M65fs.run(new String[0], Map.of(), new PrintStream(out), new PrintStream(err)));
     assertFalse(err.toString().isEmpty());
   }
+
+  @Test
+  void copyLinesForTheMega65KeepBothFileNames() {
+    assertEquals("'a.prg' -> '/GAMES/a.prg'", M65fs.fitCopyLine("a.prg", "/GAMES/a.prg", 80));
+    String src = "/home/someone/projects/mega65/build/output/" + "x".repeat(40) + "/game.prg";
+    String line = M65fs.fitCopyLine(src, "/GAMES/game.prg", 80);
+    assertEquals(80, line.length(), line);
+    assertTrue(line.startsWith("'..."), line);
+    assertTrue(line.endsWith("/game.prg' -> '/GAMES/game.prg'"), line);
+    String both = M65fs.fitCopyLine(src, "/" + "y".repeat(60) + "/game.prg", 80);
+    assertEquals(80, both.length(), both);
+    assertTrue(both.matches("'\\.\\.\\..*game\\.prg' -> '\\.\\.\\..*/game\\.prg'"), both);
+  }
 }

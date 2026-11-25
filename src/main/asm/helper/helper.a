@@ -97,6 +97,7 @@ frame    = $56                  ; frame counter ($D7FA) at the last second
 fps      = $57                  ; frames per second (50 PAL, 60 NTSC)
 idle     = $58                  ; seconds since the last request (up to 255)
 tlen     = $59                  ; text: length
+roff     = $5a                  ; 2: text: offset of its row
 
 ; ---------------------------------------------------------------- screen layout
 !macro at .row, .col {
@@ -108,7 +109,8 @@ ROW_STATS  = 4                  ; requests, read, written, running
 ROW_LINE   = 9
 ROW_LOG    = 10                 ; host lines up to the last row
 LOG        = SCREEN + ROW_LOG * COLS
-LOG_LAST   = SCREEN + (ROWS - 1) * COLS
+LOG_NEXT   = SCREEN + ROWS * COLS   ; row for the next log line (ROWS: full, scroll); right
+                                ; after the screen, so that the next helper finds it too
 COL_TOTAL  = 12                 ; numbers: 10 digits
 COL_RATE   = 30
 
@@ -1085,10 +1087,10 @@ dc_dstbank:
         rts
 
 ; ---------------------------------------------------------------- screen and frames
-init_screen:
-        ; 80 x 50 text: with the hot registers on the VIC-IV derives the geometry (columns,
-        ; rows, line step, borders) from the legacy registers; then our own screen and
-        ; character set, with the hot registers off so that they stay
+; 80 x 50 text: with the hot registers on the VIC-IV derives the geometry (columns, rows, line
+; step, borders) from the legacy registers; then our own screen and character set, with the
+; hot registers off so that they stay
+setup_vic:
         lda #$80
         tsb $d05d
         lda #$1b                ; text, display on, 25 rows (VIC-II view)
@@ -1124,20 +1126,54 @@ init_screen:
         sta $d069
         lda #^CHARSET
         sta $d06a
+        rts
+
+init_screen:
         ; the screen of an earlier helper (each tool starts the helper again): its log stays
         ldx #title_end - title - 1
 -       lda title,x
         ora #$80
         cmp SCREEN + 1,x
-        bne +
+        lbne .cold
         dex
         bpl -
-        lda #<(ROW_LOG * COLS)  ; found: clear only the rows above the log
+        lda LOG_NEXT            ; the log goes on where it ended (if that is plausible)
+        cmp #ROW_LOG
+        bcc .full
+        cmp #ROWS + 1
+        bcc +
+.full:  lda #ROWS
+        sta LOG_NEXT
++       lda $d031               ; and still shown as we set it up: then nothing is changed,
+        cmp #$c8                ; so the screen does not flicker on every command
+        bne .vic
+        bit $d05d               ; hot registers off
+        bmi .vic
+        lda $d060
+        cmp #<SCREEN
+        bne .vic
+        lda $d061
+        cmp #>SCREEN
+        bne .vic
+        lda $d062
+        bne .vic
+        lda $d069
+        cmp #>CHARSET
+        bne .vic
+        lda $d06a
+        cmp #^CHARSET
+        bne .vic
+        jmp .texts
+.vic:   jsr setup_vic
+        lda #<(ROW_LOG * COLS)  ; clear only the rows above the log
         ldx #>(ROW_LOG * COLS)
-        bra ++
-+       lda #<(ROWS * COLS)
+        bra .clear
+.cold:  jsr setup_vic
+        lda #ROW_LOG            ; an empty log
+        sta LOG_NEXT
+        lda #<(ROWS * COLS)
         ldx #>(ROWS * COLS)
-++      sta clr_screen
+.clear: sta clr_screen
         sta clr_colour
         stx clr_screen + 1
         stx clr_colour + 1
@@ -1178,6 +1214,7 @@ clr_colour:
         sta SCREEN + ROW_LINE * COLS,x
         dex
         bpl -
+.texts:
         ldx #0                  ; texts: address, [$80 = reversed,] screen codes, 0;
 .text:  lda texts,x             ; address 0 ends
         sta ptr
@@ -1508,30 +1545,78 @@ op_text:
         cmp #COLS + 1
         lbcs .trts
         sta tlen
-        lda RXBUF + F_ARG + 1
-        bne +
-        ; new line: the log up one row (screen and colours)
-        +copy LOG + COLS, LOG, (ROWS - ROW_LOG - 1) * COLS
+        lda LOG_NEXT            ; the row: the next free one, or (replace) the last line
+        ldx RXBUF + F_ARG + 1
+        beq .new
+        cmp #ROW_LOG + 1
+        bcc .new                ; nothing to replace: a new line after all
+        sec
+        sbc #1
+        bra .row
+.new:   cmp #ROWS
+        bcc +
+        ; full: the log up one row (screen and colours), the line goes into the last row.
+        ; Only while the VIC does not draw the log: otherwise one frame shows the rows above
+        ; the beam unscrolled (a jolt over the whole log). Started below the log (bottom
+        ; border, vertical blank), the copy is done long before the beam reaches the log
+        ; again. VIC-II raster lines: text from 51, 4 per row (V400), the log ends at 251.
+-       bit $d011               ; raster 256 and more
+        bmi +
+        lda $d012
+        cmp #251
+        bcc -
++       +copy LOG + COLS, LOG, (ROWS - ROW_LOG - 1) * COLS
         +copy COLRAM + ROW_LOG * COLS + COLS, COLRAM + ROW_LOG * COLS, (ROWS - ROW_LOG - 1) * COLS
-+       ldx #0
--       cpx tlen
+        lda #ROWS - 1
+        bra .row
++       inc LOG_NEXT
+.row:   sta roff                ; roff = row * 80 = row * 5 * 16 (row * 5 fits a byte)
+        asl
+        asl
+        clc
+        adc roff
+        sta roff
+        lda #$00
+        sta roff + 1
+        ldx #4
+-       asl roff
+        rol roff + 1
+        dex
+        bne -
+        lda roff
+        clc
+        adc #<SCREEN
+        sta ptr
+        lda roff + 1
+        adc #>SCREEN
+        sta ptr + 1
+        ldx #0
+        ldy #0
+-       cpy tlen
         bcs +
-        lda RXBUF + F_ARG + 2,x
-        sta LOG_LAST,x
-        inx
+        lda RXBUF + F_ARG + 2,y
+        sta (ptr),y
+        iny
         bra -
 +       lda #' '
--       cpx #COLS
+-       cpy #COLS
         beq +
-        sta LOG_LAST,x
-        inx
+        sta (ptr),y
+        iny
         bra -
 +       lda RXBUF + F_ARG       ; colour of the line
         ldx #$00
         ldy #$00
         ldz #$00
         stq dma_src
-        +set32 dma_dst, COLRAM + (ROWS - 1) * COLS
+        lda roff                ; COLRAM + roff
+        sta dma_dst
+        lda roff + 1
+        sta dma_dst + 1
+        lda #(COLRAM >> 16) & $ff
+        sta dma_dst + 2
+        lda #COLRAM >> 24
+        sta dma_dst + 3
         lda #<COLS
         ldx #>COLS
         sta dma_len
