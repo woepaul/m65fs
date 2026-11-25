@@ -304,6 +304,13 @@ every tool, common requests ("push this disk and run it", "back up the card"), s
 troubleshooting. Claude Code picks it up automatically in this project. Other agents can load
 the folder as a skill, with the tools installed on the PATH.
 
+Each release also has the skill as `m65fs-skill-X.Y.Z.zip`. To use it in every project with
+Claude Code, unpack it into your personal skills folder:
+
+```sh
+unzip m65fs-skill-0.2.0.zip -d ~/.claude/skills/     # creates ~/.claude/skills/m65fs/
+```
+
 ## Finding and fixing fragmented files
 
 Files written by other tools (or copied with a card reader) can be fragmented. The `Defrag`

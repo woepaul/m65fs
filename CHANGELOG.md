@@ -4,41 +4,34 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
-## Unreleased
+## 0.2.0 (2026-11-25)
 
-- `m65.tree -L LEVEL` is fast now: it reads only the levels it shows. Before, it read the whole
-  card (for the directory totals) and only cut the output, so `-L 1` took as long as a full
-  tree (on a test card: 4 instead of 196 requests to the MEGA65). Directories whose content is
-  cut off by `-L` therefore show no totals, and the summary counts what was read, e.g.
-  `6 directories, 23 files, 6.3 MiB (to level 1)`. Without `-L` the output is unchanged.
-- The transfer helper's screen: 80 x 50 instead of a few lines in 40 columns. It shows the
-  state, statistics (requests, KiB read and written, each per second, and the time running)
-  and a log of what the tools do: the command line without `m65.` (white, e.g.
-  `cp -rv game m65:/GAMES`) and below it, indented, a line for every copied file (green, also
-  without `-v`; red with `failed`), e.g. `  .../game/disk1.d81 -> /GAMES/game/disk1.d81` (no
-  quotes, to leave room for the paths), and the files `m65.defrag --fix` moves. Too long
-  lines keep the command name or indent and lose the start of their paths. The log fills from the top and scrolls when full (in the vertical
-  blank, so that the screen does not jolt); it survives the next command (each one starts the
-  helper again). A copied file costs one round trip more for its line.
+**The transfer helper's screen**
+
+- 80 x 50 instead of a few lines in 40 columns. It shows who the helper is reserved for and
+  whether it is busy or idle, statistics (requests, KiB read and written, each per second, and
+  the time running), and a log of what the tools do: each command line without `m65.` (white,
+  e.g. `cp -rv game m65:/GAMES`) and below it, indented, a line for every copied file (green,
+  also without `-v`; red with `failed`), e.g. `  .../game/disk1.d81 -> /GAMES/game/disk1.d81`,
+  and the files `m65.defrag --fix` moves. Too long lines keep the command name or indent and
+  lose the start of their paths. The log fills from the top and scrolls when full, in the
+  vertical blank so that the screen does not jolt. A copied file costs one round trip more
+  for its line.
+- The border shows the state: red while requests come in, green when idle, blinking red after
+  a fatal error.
+- RUN/STOP (or ESC) on the MEGA65 quits the helper into BASIC 65 when it is idle (green: no
+  write batch open, no request for 5 seconds); pressed while busy, the status row says
+  `(run/stop: not now)`. After a fatal helper error the same keys reset.
+
+**Faster, and no more taking over a busy MEGA65**
+
 - Tools reuse the running transfer helper: a tool ends its session with a release (new helper
-  request `$15`) instead of just leaving, and the next tool says hello to the helper directly
-  instead of triggering the MEGA65 and loading the helper again. `m65.ls` takes about 0.1 s
-  instead of 0.5 s, and the screen no longer jolts at every command (the trigger makes Hyppo
-  switch to a 40-column C64 screen for a moment). The hello answer carries the helper's
-  version, so only a helper of the same m65fs version is reused; otherwise, or if nothing
-  answers within 150 ms, the tool triggers as before.
-- New `m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...`: moves the files of a directory with
-  more than MAX (250) files into subdirectories by name, e.g. `0-C`, `D-G`, `R`, and by the
-  next letter where one letter has too many (`Sa-Sd`); as few groups as MAX allows, as evenly
-  filled as the names allow. For cores whose file browser loads only so many entries (the C64
-  core warns above about 300 to 600). `-r` handles every directory below DIR, `--dry-run`
-  only shows the plan. Works on the card (`m65:/DIR`, `/DIR`, one session, only directory
-  entries change: `-r` over 11,000 files plans in about 8 s) and on local directories.
-- Faster tree walks on the card: path lookups read the directories along the path in
-  cache-sized pieces. Before, a directory larger than the sector cache's read-ahead was read
-  from the card again for every lookup, so walking a large tree with `Files.walk` (or
-  anything that looks up many entries in a big directory) took minutes instead of seconds
-  (11,000 files: 116 s, now 8 s).
+  request `$15`), and the next tool says hello to the helper directly instead of triggering
+  the MEGA65 and loading the helper again. `m65.ls` takes about 0.1 s instead of 0.5 s, the
+  screen no longer jolts at every command (the trigger makes Hyppo switch to a 40-column C64
+  screen for a moment), and the log and statistics go on. Only a helper of the same version
+  is reused (its hello answer says it); otherwise, or if nothing answers within 150 ms, the
+  tool triggers as before.
 - A busy MEGA65 is no longer taken over. So far a tool always triggered the MEGA65 if the
   helper did not answer it, which ended another command's session (from a second terminal or
   another computer) in the middle of its work. Now the helper answers "busy", and the tool
@@ -48,15 +41,37 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   - a command of another computer is running;
   - the helper is reserved for another computer: the computer that started it owns it (by its
     IPv6 address) until `m65.reset` there, `m65.boot`/`m65.run`, or RUN/STOP on the MEGA65.
-    The helper's status row shows `reserved for fe80::…, busy` or `…, idle`.
+
   `m65.run` and `m65.reset` ask the helper before they trigger. `M65_FORCE=1` takes the
-  MEGA65 over anyway. Library: `Mega65BusyException`, env `force`.
-- The helper's border shows its state: red while requests come in, green when idle (then
-  RUN/STOP works), blinking red after a fatal error.
-- RUN/STOP (or ESC) on the MEGA65 quits the transfer helper into BASIC 65 when it is idle (no
-  write batch open, no request for 5 seconds). After a fatal helper error the same keys reset.
-- Library: `Mega65FileSystem.showOnMega65(line, kind, replace)` shows a line in that log;
-  helper request `$14` (`Request.Text`, `RemoteSdSession.showText`).
+  MEGA65 over anyway.
+- `m65.tree -L LEVEL` reads only the levels it shows. Before, it read the whole card (for the
+  directory totals) and only cut the output, so `-L 1` took as long as a full tree (test card:
+  4 instead of 196 requests). Directories cut off by `-L` show no totals, and the summary
+  counts what was read, e.g. `6 directories, 23 files, 6.3 MiB (to level 1)`. Without `-L`
+  the output is unchanged.
+- Faster tree walks on the card: path lookups read the directories along the path in
+  cache-sized pieces. Before, a directory larger than the sector cache's read-ahead was read
+  from the card again for every lookup, so walking a large tree took minutes instead of
+  seconds (11,000 files: 116 s, now 8 s).
+
+**New: `m65.dsplit`**
+
+- `m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...` moves the files of a directory with more than
+  MAX (250) files into subdirectories by name, e.g. `0-C`, `D-G`, `R`, and by the next letter
+  where one letter has too many (`Sa-Sd`); as few groups as MAX allows, as evenly filled as
+  the names allow. For cores whose file browser loads only so many entries (the C64 core warns
+  above about 300 to 600). `-r` handles every directory below DIR, `--dry-run` only shows the
+  plan. Works on the card (one session, only directory entries change) and on local
+  directories.
+
+**Also**
+
+- The agent skill is part of the release: `m65fs-skill-0.2.0.zip`, to unpack into
+  `~/.claude/skills/`.
+- Library: `Mega65FileSystem.showOnMega65(line, kind, replace)` shows a line in the helper's
+  log; `Mega65BusyException`, env `force`; `RemoteSdSession.attachRunning`, `ensureFree`,
+  `helperAnswers`; helper requests `$14` text and `$15` release, hello answers with the
+  helper version (`HELPER_VERSION`) or "busy".
 
 ## 0.1.3 (2026-11-25)
 

@@ -1,5 +1,6 @@
 # A tag vX.Y.Z publishes the release: the jar and the native binaries for Linux amd64 and
-# aarch64, macOS aarch64 and Windows amd64, with the CHANGELOG.md section "## X.Y.Z" as notes.
+# aarch64, macOS aarch64 and Windows amd64, and the agent skill (m65fs-skill-X.Y.Z.zip), with
+# the CHANGELOG.md section "## X.Y.Z" as notes.
 name: Release
 
 on:
@@ -74,5 +75,6 @@ jobs:
         run: |
           v="${{ needs.prepare.outputs.version }}"
           tools/release-notes.sh "$v" > notes.md
+          (cd .claude/skills && zip -r -q "../../dist/m65fs-skill-$v.zip" m65fs)
           ls -l dist
           gh release create "$GITHUB_REF_NAME" dist/* --title "m65fs $v" --notes-file notes.md
