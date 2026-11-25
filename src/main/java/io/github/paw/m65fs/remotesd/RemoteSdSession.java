@@ -111,7 +111,7 @@ public final class RemoteSdSession implements AutoCloseable {
    * The version of the bundled helper (its hello answer); only such a helper is reused. Raised
    * with every change of the helper (together with {@code HELPER_VERSION} in helper.a).
    */
-  public static final int HELPER_VERSION = 3;
+  public static final int HELPER_VERSION = 4;
 
 
   /** How long {@link #connect} waits for a running helper to answer hello. */

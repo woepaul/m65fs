@@ -785,7 +785,7 @@ public final class M65fs {
       for (String d : a) {
         Path dir = isLocalDir(d) ? Path.of(d) : fs.getPath(cardPath(d));
         if (!Files.isDirectory(dir)) {
-          warn("'" + d + "': Not a directory");
+          warn("'" + d + "': " + (Files.exists(dir) ? "Not a directory" : "No such file or directory"));
           continue;
         }
         if (f.contains('r')) {

@@ -31,7 +31,7 @@
 
 !cpu m65
 
-HELPER_VERSION = 3              ; in the hello answer; m65fs only reuses a running helper of
+HELPER_VERSION = 4              ; in the hello answer; m65fs only reuses a running helper of
                                 ; its own version (RemoteSdSession.HELPER_VERSION). Raise both
                                 ; with every change of the helper: otherwise a running older
                                 ; helper of the same number is reused
@@ -356,7 +356,10 @@ op_hello:
         lda #1
         sta owned
         sta client
-        lda #$ff                ; a new session (perhaps not the first of this helper): no batch
+        lda b_active            ; an earlier session ended in the middle of a write batch
+        beq +                   ; (Ctrl-C): the SD card is still in a multi-sector write and
+        jsr sd_reset            ; would never answer a read; reset it first
++       lda #$ff                ; a new session (perhaps not the first of this helper): no batch
         sta b_counter           ; of an earlier one counts (its counter could come again)
         lda #$00
         sta b_active
@@ -947,6 +950,18 @@ cache_addr:
         rts
 
 ; ---------------------------------------------------------------- SD card
+; reset the SD card (as Hyppo's sd_resetsequence) and wait until it is ready; the sectors
+; written so far stay, an unfinished multi-sector write is abandoned
+sd_reset:
+        lda #$00
+        sta $d680
+        lda #$01
+        sta $d680
+        jsr sd_wait
+        lda #$80
+        tsb $d689               ; its own sector buffer again
+        rts
+
 sd_wait:
         lda $d680
         and #$03
