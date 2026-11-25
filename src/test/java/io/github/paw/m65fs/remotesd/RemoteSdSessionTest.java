@@ -53,6 +53,58 @@ class RemoteSdSessionTest {
   }
 
   @Test
+  void aReleasedHelperIsReusedAndOldBatchCountersDoNotCount() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      byte[] first = new byte[2 * 512];
+      Arrays.fill(first, (byte) 0x11);
+      var s1 = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false));
+      s1.writeSectors(10, ByteBuffer.wrap(first)); // batch counter 0
+      s1.close(); // release instead of quit
+      assertEquals(1, fake.releases);
+      assertFalse(fake.quit);
+
+      var s2 = RemoteSdSession.attachRunning(fake.target(), opts().withQuitOnClose(false), Duration.ofMillis(500))
+          .orElseThrow();
+      assertEquals(RemoteSdSession.HELPER_VERSION, s2.helperVersion());
+      byte[] second = new byte[2 * 512];
+      Arrays.fill(second, (byte) 0x22);
+      s2.writeSectors(20, ByteBuffer.wrap(second)); // counter 0 again: must be written, not skipped
+      ByteBuffer back = ByteBuffer.allocate(2 * 512);
+      s2.readSectors(20, back);
+      assertArrayEquals(second, back.array());
+      s2.close();
+      assertEquals(2, fake.hellos);
+      assertTrue(fake.fatalErrors().isEmpty(), fake.fatalErrors().toString());
+    }
+  }
+
+  @Test
+  void aHelperThatServesAnotherClientIsNotReused() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1);
+        var busy = RemoteSdSession.attach(UdpLink.open(fake.target()), opts().withQuitOnClose(false))) {
+      assertTrue(RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(200)).isEmpty());
+      assertFalse(RemoteSdSession.helperAnswers(fake.target(), Duration.ofMillis(200)));
+    }
+  }
+
+  @Test
+  void aHelperOfAnotherVersionIsNotReused() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      fake.helperVersion = 0; // an older helper (7-byte answer would say the same)
+      assertTrue(RemoteSdSession.attachRunning(fake.target(), opts(), Duration.ofMillis(200)).isEmpty());
+    }
+  }
+
+  @Test
+  void helperAnswersLeavesItUnlocked() throws IOException {
+    try (var fake = new FakeRemoteSd(image, 0, 0, 1)) {
+      assertTrue(RemoteSdSession.helperAnswers(fake.target(), Duration.ofMillis(500)));
+      assertTrue(RemoteSdSession.helperAnswers(fake.target(), Duration.ofMillis(500)));
+      assertEquals(2, fake.releases);
+    }
+  }
+
+  @Test
   void textGoesToTheHelpersLog() throws IOException {
     try (var fake = new FakeRemoteSd(image, 0, 0, 1); var s = attach(fake)) {
       s.showText(new Request.Text(Request.Text.WHITE, false, "m65.cp -v a m65:/"));

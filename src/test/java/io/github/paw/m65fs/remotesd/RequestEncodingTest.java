@@ -126,4 +126,21 @@ class RequestEncodingTest {
     byte[] r = {'m', 'r', 's', 'p', 3, 0, 0x14};
     assertEquals(new Response.TextAck(3), Response.parse(ByteBuffer.wrap(r)).orElseThrow());
   }
+
+  @Test
+  void theJavaSideKnowsTheHelpersVersion() throws java.io.IOException {
+    String asm = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/asm/helper/helper.a"));
+    var m = java.util.regex.Pattern.compile("(?m)^HELPER_VERSION\\s*=\\s*(\\d+)").matcher(asm);
+    org.junit.jupiter.api.Assertions.assertTrue(m.find(), "HELPER_VERSION in helper.a");
+    assertEquals(Integer.parseInt(m.group(1)), RemoteSdSession.HELPER_VERSION,
+        "change both together (and rebuild helper.prg with tools/build-blobs.sh)");
+  }
+
+  @Test
+  void parsesHelloWithAndWithoutVersion() {
+    assertEquals(new Response.HelloAck(1, 0),
+        Response.parse(ByteBuffer.wrap(new byte[] {'m', 'r', 's', 'p', 1, 0, (byte) 0xfd})).orElseThrow());
+    assertEquals(new Response.HelloAck(1, 7),
+        Response.parse(ByteBuffer.wrap(new byte[] {'m', 'r', 's', 'p', 1, 0, (byte) 0xfd, 7})).orElseThrow());
+  }
 }

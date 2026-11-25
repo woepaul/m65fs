@@ -23,6 +23,7 @@ public sealed interface Request {
   int OP_MOUNT = 0x12;
   int OP_CWD = 0x13;
   int OP_TEXT = 0x14;
+  int OP_RELEASE = 0x15;
   int OP_HELLO = 0xFD;
   int OP_RESET_TX = 0xFE;
   int OP_QUIT = 0xFF;
@@ -35,6 +36,17 @@ public sealed interface Request {
     @Override
     public byte[] encode() {
       return header(HEADER, OP_HELLO);
+    }
+  }
+
+  /**
+   * Ends the session but leaves the helper running and unlocked: the next hello may come from
+   * another client (the next tool then needs no trigger and no upload).
+   */
+  record Release() implements Request {
+    @Override
+    public byte[] encode() {
+      return header(HEADER, OP_RELEASE);
     }
   }
 

@@ -3,7 +3,10 @@
 ; Serves the MEGA65's SD card to m65fs over Ethernet: the protocol of mega65-tools'
 ; remotesd_eth ("mreq"/"mrsp" over UDP port 4510, IPv6 link-local), restricted to what m65fs
 ; uses (see io.github.paw.m65fs.remotesd.Request and Response):
-;   $FD hello        locks the session to the sender (address and port)
+;   $FD hello        locks the session to the sender (address and port); answers with the
+;                    helper's version (HELPER_VERSION)
+;   $15 release      unlocks it again: the next hello may come from another client (the next
+;                    tool reuses the running helper instead of triggering and loading it again)
 ;   $04 read         up to 128 sectors, one answer per sector
 ;   $02 write        one sector, or one sector of a batch of 2..128 (written in order as the
 ;                    sectors arrive, read back and compared when the batch is complete)
@@ -26,6 +29,9 @@
 ; Assemble with ACME: acme --cpu m65 -f cbm -o helper.prg helper.a
 
 !cpu m65
+
+HELPER_VERSION = 1              ; in the hello answer; m65fs only reuses a running helper of
+                                ; its own version (RemoteSdSession.HELPER_VERSION)
 
 ; ---------------------------------------------------------------- memory
 SCREEN  = $3000                 ; 80 x 50 = 4000 bytes
@@ -283,6 +289,8 @@ dispatch:
         lbeq op_cwd
         cmp #$14
         lbeq op_text
+        cmp #$15
+        lbeq op_release
         cmp #$ff
         lbeq op_quit
         rts
@@ -311,7 +319,7 @@ op_hello:
         beq +
         jsr same_client
         bne ++                  ; another client: ignored
-        bra reply7              ; repeated hello (answer lost): answer again
+        bra .hello_ack          ; repeated hello (answer lost): answer again
 +       ldx #5                  ; lock: the client's MAC, address and port go into the reply
 -       lda RXBUF + F_ETHSRC,x  ; frame
         sta TXBUF,x
@@ -327,11 +335,26 @@ op_hello:
         lda RXBUF + F_UDP + 1
         sta TXBUF + F_UDP + 3
         inc client
+        lda #$ff                ; a new session (perhaps not the first of this helper): no batch
+        sta b_counter           ; of an earlier one counts (its counter could come again)
+        lda #$00
+        sta b_active
         ldx #msg_connected - msgs
         jsr status
-reply7: lda #7
+.hello_ack:
+        lda #HELPER_VERSION
+        sta TXBUF + F_ARG
+        lda #8
         jmp reply
 ++      rts
+
+op_release:                     ; answer, then unlock
+        lda #7
+        jsr reply
+        lda #$00
+        sta client
+        ldx #msg_waiting - msgs
+        jmp status
 
 op_quit:
         lda #7

@@ -140,7 +140,7 @@ There is one session per MEGA65, because the helper locks itself to the first cl
 | `timeout` | 3000 ms | Per-request timeout (each request is retransmitted within it) |
 | `writeWindow` | 3 or 28 | Unacknowledged write packets; the default depends on the board model, as in `mega65_ftp` |
 | `readAhead` | 16 | Sectors read ahead on cache misses |
-| `quitOnClose` | `true` | Send quit on close. The MEGA65 then resets and leaves the helper. |
+| `quitOnClose` | `true` | Send quit on close. The MEGA65 then resets and leaves the helper. With `false` the session ends with release instead: the helper keeps running, and the next session uses it without a trigger and upload (about 0.1 s instead of 0.5 s). |
 | `readOnly` | `false` | Reject all changes |
 | `zone` | system | Time zone for FAT timestamps, which are stored as local times |
 | `imageFile` | — | Use a local image instead of the network |

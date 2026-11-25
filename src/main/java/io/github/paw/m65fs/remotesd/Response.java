@@ -10,7 +10,10 @@ public sealed interface Response {
 
   int seq();
 
-  record HelloAck(int seq) implements Response {}
+  /** {@code version}: the helper's (0 for helpers that do not tell it). */
+  record HelloAck(int seq, int version) implements Response {}
+
+  record ReleaseAck(int seq) implements Response {}
 
   record QuitAck(int seq) implements Response {}
 
@@ -45,7 +48,8 @@ public sealed interface Response {
     int seq = WindowProtocol.le16(b, 4);
     int op = b.get(6) & 0xff;
     Response r = switch (op) {
-      case Request.OP_HELLO -> len == 7 ? new HelloAck(seq) : null;
+      case Request.OP_HELLO -> len == 7 ? new HelloAck(seq, 0) : len == 8 ? new HelloAck(seq, b.get(7) & 0xff) : null;
+      case Request.OP_RELEASE -> len == 7 ? new ReleaseAck(seq) : null;
       case Request.OP_QUIT -> len == 7 ? new QuitAck(seq) : null;
       case Request.OP_TEXT -> len == 7 ? new TextAck(seq) : null;
       case Request.OP_READ_SECTORS -> len == 13 + BlockDevice.SECTOR_SIZE

@@ -7,6 +7,7 @@ import io.github.paw.m65fs.launch.Mega65Launcher;
 import io.github.paw.m65fs.nio.Mega65FileAttributes;
 import io.github.paw.m65fs.nio.Mega65FileStore;
 import io.github.paw.m65fs.nio.Mega65FileSystem;
+import io.github.paw.m65fs.remotesd.RemoteSdSession;
 import io.github.paw.m65fs.remotesd.Request;
 import io.github.paw.m65fs.transport.Mega65Locator;
 import io.github.paw.m65fs.transport.Target;
@@ -1104,7 +1105,8 @@ public final class M65fs {
         String remembered = Files.readString(cache).strip();
         Target r = remembered.isEmpty() ? null : Target.parse(remembered);
         if (r != null && r.networkInterface() != null && !Mega65Locator.isWireless(r.networkInterface())
-            && Etherload.answers(r, Duration.ofMillis(300))) {
+            && (RemoteSdSession.helperAnswers(r, Duration.ofMillis(150))
+                || Etherload.answers(r, Duration.ofMillis(300)))) {
           return remembered;
         }
       } catch (IOException | IllegalArgumentException e) {

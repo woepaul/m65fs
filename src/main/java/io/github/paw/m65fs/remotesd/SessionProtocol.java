@@ -43,7 +43,8 @@ final class SessionProtocol implements WindowProtocol {
       case Request.OP_MOUNT -> len == 8 && equal(rx, tx, 4, 2);
       case Request.OP_CWD -> len == 13 && equal(rx, tx, 4, 2);
       case Request.OP_TEXT -> len == 7 && equal(rx, tx, 4, 2);
-      case Request.OP_HELLO, Request.OP_QUIT -> len == 7;
+      case Request.OP_HELLO -> len == 7 || len == 8;
+      case Request.OP_QUIT, Request.OP_RELEASE -> len == 7;
       default -> false;
     };
   }

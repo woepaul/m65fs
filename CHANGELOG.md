@@ -20,6 +20,13 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   start of their paths. The log fills from the top and scrolls when full (in the vertical
   blank, so that the screen does not jolt); it survives the next command (each one starts the
   helper again). A copied file costs one round trip more for its line.
+- Tools reuse the running transfer helper: a tool ends its session with a release (new helper
+  request `$15`) instead of just leaving, and the next tool says hello to the helper directly
+  instead of triggering the MEGA65 and loading the helper again. `m65.ls` takes about 0.1 s
+  instead of 0.5 s, and the screen no longer jolts at every command (the trigger makes Hyppo
+  switch to a 40-column C64 screen for a moment). The hello answer carries the helper's
+  version, so only a helper of the same m65fs version is reused; otherwise, or if nothing
+  answers within 150 ms, the tool triggers as before.
 - The helper's border shows its state: red while requests come in, green when idle (then
   RUN/STOP works), blinking red after a fatal error.
 - RUN/STOP (or ESC) on the MEGA65 quits the transfer helper into BASIC 65 when it is idle (no

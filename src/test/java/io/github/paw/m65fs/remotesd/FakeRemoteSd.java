@@ -43,6 +43,11 @@ public final class FakeRemoteSd implements AutoCloseable {
   private final double dup;
   private final List<String> fatal = Collections.synchronizedList(new ArrayList<>());
   private final List<String> mounted = Collections.synchronizedList(new ArrayList<>());
+  /** The version the hello answer reports. */
+  public volatile int helperVersion = RemoteSdSession.HELPER_VERSION;
+  /** Sessions locked (hellos from an unlocked state) and releases so far. */
+  public volatile int hellos;
+  public volatile int releases;
   private final List<byte[]> texts = Collections.synchronizedList(new ArrayList<>());
 
   volatile int modelId = 0x03;
@@ -144,8 +149,21 @@ public final class FakeRemoteSd implements AutoCloseable {
     }
     switch (op) {
       case Request.OP_HELLO -> {
+        if (client == null) {
+          // a new session, perhaps not the first of this helper: no earlier batch counts
+          currentBatchCounter = 0xff;
+          writeBatchActive = false;
+          hellos++;
+        }
         client = from;
+        byte[] r = header(p, 8);
+        r[7] = (byte) helperVersion;
+        reply(r, from);
+      }
+      case Request.OP_RELEASE -> {
         reply(header(p, 7), from);
+        client = null;
+        releases++;
       }
       case Request.OP_QUIT -> {
         quit = true;

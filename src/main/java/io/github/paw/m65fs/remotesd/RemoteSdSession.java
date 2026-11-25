@@ -75,7 +75,8 @@ public final class RemoteSdSession implements AutoCloseable {
 
   private final SlidingWindow window;
   private final Options options;
-  private final Duration timeout;
+  private Duration timeout;
+  private int helperVersion = -1;
   private int writeWindow = 3;
   private int modelId = -1;
   private Mode mode = Mode.IDLE;
@@ -99,8 +100,22 @@ public final class RemoteSdSession implements AutoCloseable {
     this.quitOnClose = quit;
   }
 
-  /** Bootstraps the transfer helper on {@code target} and opens a session. */
+  /** The version of the bundled helper (its hello answer); only such a helper is reused. */
+  public static final int HELPER_VERSION = 1;
+
+  /** How long {@link #connect} waits for a running helper to answer hello. */
+  static final Duration RUNNING_HELPER_TIMEOUT = Duration.ofMillis(150);
+
+  /**
+   * Opens a session on {@code target}: with the transfer helper that is still running there
+   * (left by an earlier session that ended with release, see {@link #close()}), or else after
+   * bootstrapping it (trigger, upload, start).
+   */
   public static RemoteSdSession connect(Target target, Options options) throws IOException {
+    var running = attachRunning(target, options, RUNNING_HELPER_TIMEOUT);
+    if (running.isPresent()) {
+      return running.get();
+    }
     UdpLink link = UdpLink.open(target);
     try {
       Etherload.connect(link).startHelper(options.helperProgram());
@@ -119,16 +134,74 @@ public final class RemoteSdSession implements AutoCloseable {
     var session = new RemoteSdSession(new SlidingWindow(link, SessionProtocol.INSTANCE), options);
     try {
       session.hello();
-      session.modelId = session.peek(MODEL_ID_ADDRESS, 1)[0] & 0xff;
+      session.init();
     } catch (IOException | RuntimeException e) {
       link.close();
       throw e;
     }
-    session.writeWindow = options.writeWindow()
-        .orElse(LARGE_RX_BUFFER_MODELS.contains(session.modelId) ? 28 : 3);
-    LOG.log(Level.DEBUG, "helper session on {0}: model id ${1}, write window {2}",
-        link.target(), Integer.toHexString(session.modelId), session.writeWindow);
     return session;
+  }
+
+  /** After hello: model id and write window. */
+  private void init() throws IOException {
+    modelId = peek(MODEL_ID_ADDRESS, 1)[0] & 0xff;
+    writeWindow = options.writeWindow().orElse(LARGE_RX_BUFFER_MODELS.contains(modelId) ? 28 : 3);
+    LOG.log(Level.DEBUG, "helper session on {0}: model id ${1}, write window {2}, helper version {3}",
+        target(), Integer.toHexString(modelId), writeWindow, helperVersion);
+  }
+
+  /**
+   * A session with the helper running on {@code target}, if one of our version answers hello
+   * within {@code wait} (it is unlocked: its last session ended with release); otherwise empty
+   * (nothing answers, or the helper serves another client or is of another version).
+   */
+  public static java.util.Optional<RemoteSdSession> attachRunning(Target target, Options options, Duration wait)
+      throws IOException {
+    UdpLink link = UdpLink.open(target);
+    var session = new RemoteSdSession(new SlidingWindow(link, SessionProtocol.INSTANCE), options);
+    session.timeout = wait;
+    try {
+      session.hello();
+    } catch (Mega65TimeoutException e) {
+      link.close();
+      return java.util.Optional.empty();
+    } catch (IOException | RuntimeException e) {
+      link.close();
+      throw e;
+    }
+    session.timeout = options.timeout();
+    if (session.helperVersion != HELPER_VERSION) {
+      LOG.log(Level.DEBUG, "running helper on {0} has version {1}, not {2}: starting a new one", target,
+          session.helperVersion, HELPER_VERSION);
+      link.close(); // it stays locked to this link; the bootstrap replaces it
+      return java.util.Optional.empty();
+    }
+    try {
+      session.init();
+    } catch (IOException | RuntimeException e) {
+      link.close();
+      throw e;
+    }
+    LOG.log(Level.DEBUG, "reusing the running helper on {0}", target);
+    return java.util.Optional.of(session);
+  }
+
+  /**
+   * Whether an unlocked helper of our version runs on {@code target}: hello, then release
+   * (a quick check of a remembered address that, unlike a trigger, leaves the screen alone).
+   */
+  public static boolean helperAnswers(Target target, Duration wait) throws IOException {
+    var s = attachRunning(target, Options.defaults().withQuitOnClose(false), wait);
+    if (s.isEmpty()) {
+      return false;
+    }
+    s.get().close();
+    return true;
+  }
+
+  /** The helper's version from its hello answer. */
+  public int helperVersion() {
+    return helperVersion;
   }
 
   public Target target() {
@@ -150,7 +223,11 @@ public final class RemoteSdSession implements AutoCloseable {
   }
 
   private void hello() throws IOException {
-    control(new Request.Hello());
+    control(new Request.Hello(), rx -> {
+      if (Response.parse(rx).orElse(null) instanceof Response.HelloAck(_, int v)) {
+        helperVersion = v;
+      }
+    });
   }
 
   /**
@@ -340,6 +417,14 @@ public final class RemoteSdSession implements AutoCloseable {
         } else if (!quitBestEffort()) {
           LOG.log(Level.WARNING, "MEGA65 at {0} did not acknowledge quit after an earlier failure; "
               + "it may still run the transfer helper and need a manual reset", target());
+        }
+      } else if (failure == null) {
+        // the helper keeps running: unlock it for the next session (best effort; without it
+        // the next session just starts a new helper)
+        try {
+          control(new Request.Release());
+        } catch (IOException e) {
+          LOG.log(Level.DEBUG, "release not acknowledged: {0}", e.toString());
         }
       }
     } finally {

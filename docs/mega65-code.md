@@ -129,7 +129,8 @@ The protocol is remotesd_eth's (`"mreq"` / `"mrsp"`, sequence number, opcode ove
 
 | Opcode | Request | Answer |
 |---|---|---|
-| $FD hello | locks the session to the sender's address and port (a repeated hello from it is answered again) | header |
+| $FD hello | locks the session to the sender's address and port (a repeated hello from it is answered again); a new session also resets the batch state | header, helper version (`HELPER_VERSION`) |
+| $15 release | ends the session, the helper keeps running unlocked: the next tool says hello to it instead of triggering and loading a new helper (no trigger: the screen stays as it is) | header |
 | $04 read | up to 128 sectors | one answer per sector, consecutive sequence numbers; the next sector is read from the card while the current one is sent |
 | $02 write | one sector (written and read back right away), or one sector of a batch of 2..128 | acknowledged on arrival; batch sectors go into a cache at $40000 and are written in order as they arrive (multi-sector write), then read back and compared |
 | $11 memory | up to 256 bytes at a 28-bit address | the bytes |
