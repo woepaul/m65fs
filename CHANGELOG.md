@@ -4,6 +4,39 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- Progress for large transfers. `m65.cp -v` prints `'src' -> 'dst'` before copying (not after),
+  and on a terminal a progress field ` [ 66%]` follows after a second, updated in place and
+  cleared before the newline, so finished lines look as before and logs stay clean.
+  `m65.boot` shows its copy of the disk image the same way, and `m65.defrag --fix` prints each
+  file first and appends the result (`  /GAMES/big.d81: defragmented (3 fragments -> 1)`;
+  before: `  defragmented (3 fragments -> 1)  /GAMES/big.d81`).
+  Progress counts what really moves to and from the card (a file written to the card goes
+  over the network when it is closed). `M65_PROGRESS=1` forces it, `=0` turns it off.
+- `m65.cp - DEST` copies standard input, e.g. a compressed image unpacked on the fly:
+  `zcat hdd.img.gz | m65.cp -v - m65:/HDD.IMG` (also on Windows, where there is no
+  `/dev/stdin`). The data is collected on the PC first (memory, then a temporary file), because
+  the card gets the file in one contiguous run, which needs the size; progress shows the
+  transfer to the card. DEST must name the file; `-` can be given once.
+- Progress also shows when only standard output is a terminal (input from a pipe).
+- Ctrl-C during an overwrite no longer leaves a broken file. A new version that fit into the
+  old file's clusters was written over them, so an interrupted `m65.cp` (or `m65.boot` of a
+  D81 of the same size) left a mix of old and new data under the old entry (measured: 688 of
+  2048 4K blocks new). Content now always goes to free clusters first; the entry is switched
+  and the old clusters freed only after it is complete, so an interruption keeps the old
+  content. Overwriting therefore needs free space of the file's size, and the file's start
+  cluster changes.
+- An interrupted copy says so: the `-v` line keeps its progress and ends with `interrupted`
+  (` [ 42%] interrupted`), without `-v` stderr gets `m65.cp: interrupted: 'a' -> 'b' not
+  completed`; a copy that fails ends its line with `failed`. `m65.defrag --fix` marks the file
+  it was moving and reports `interrupted after 7 of 12 file(s); the others are unchanged`.
+- Tested on Linux only so far: Ctrl-C handling on Windows and macOS. On Windows, input from a
+  pipe (`... | m65.cp -v - ...`) shows no progress field (the copy itself works).
+- Library: `Mega65FileSystem.bytesRead()` / `bytesWritten()` (traffic to and from the card,
+  below the cache); `Defragmenter.defragmentWithEvents` with a `Listener` (start, deferred,
+  finished).
+
 ## 0.1.2 (2026-11-24)
 
 - Fixed: the working directory was lost on every command in 0.1.0 and 0.1.1 (`m65.cd c64`,

@@ -76,7 +76,7 @@ ls /` runs `m65.ls /`, and so on. It is also the library.
 | | Required | Optional |
 |---|---|---|
 | **Running the tools** | Java 25, or nothing with the native binary | |
-| **On the MEGA65** | a standard SD card (`ETHLOAD.M65` in the root), Ethernet, remote mode (DIP switch 2 or SHIFT+£) | the `hyppo-preserve-cwd` hypervisor patch for the shared working directory |
+| **On the MEGA65** | a standard SD card (`ETHLOAD.M65` in the root), Ethernet, remote mode (DIP switch 2 or SHIFT+£) | the hypervisor patch for the shared working directory ([mega65-core#985](https://github.com/MEGA65/mega65-core/pull/985)) |
 | **Building** | the Maven wrapper (`./mvnw`, fetches Maven and the Java build plugins) | GraalVM for the native binary (downloaded by `tools/build-native.sh`); ACME 0.97+ to rebuild the MEGA65 code (the built blobs are in the repository); `dosfstools` and `mtools` for the image tests |
 
 Nothing has to be installed on the MEGA65: everything m65fs runs there is its own small 45GS02
@@ -109,9 +109,11 @@ is the original design plan, written against mega65-tools' programs.
 * Nothing to install on the card. The MEGA65 code is bundled (see [Blobs](#blobs)).
 * Optional, for a working directory shared with BASIC (`m65.cd`): a hypervisor with
   `trap_dos_getcwd` ($0A) and `trap_dos_restorecwd` ($4C). The stock hypervisor changes to
-  the root directory on every Ethernet trigger and forgets the directory; the patch on the
-  `hyppo-preserve-cwd` branch of mega65-core saves it, and the helper returns to it when it
-  starts. To try it without flashing a core, put the patched `HICKUP.M65` into the card root
+  the root directory on every Ethernet trigger and forgets the directory; the patch proposed
+  upstream ([issue #984](https://github.com/MEGA65/mega65-core/issues/984),
+  [PR #985](https://github.com/MEGA65/mega65-core/pull/985), branch `hyppo-preserve-cwd` of
+  [woepaul/mega65-core](https://github.com/woepaul/mega65-core)) saves it, and the helper
+  returns to it when it starts. To try it without flashing a core, put the patched `HICKUP.M65` into the card root
   and power-cycle (delete it to go back).
 
 ## Opening a file system
@@ -149,8 +151,9 @@ Durations accept a `Duration`, a number of milliseconds, or an ISO-8601 string (
 Some MEGA65 cores can't read fragmented files, and the hypervisor refuses to mount a
 fragmented D81. So **this library never fragments a file**. Writes go to a buffer on the PC.
 When the channel or stream is closed, the complete content is written to one contiguous run
-of clusters: in place if it fits, otherwise relocated, and only then is the old copy freed.
-If no free run is large enough, `close()` throws
+of free clusters, and only then is the entry switched and the old copy freed. A file is never
+rewritten in place, so an interrupted write (Ctrl-C, lost connection) leaves the complete old
+content; overwriting needs free space of the new size. If no free run is large enough, `close()` throws
 `io.github.paw.m65fs.fat32.NoContiguousSpaceException` and the file keeps its previous
 content. `Mega65FileStore.getLargestContiguousSpace()` returns the largest file that still
 fits.
@@ -239,6 +242,7 @@ m65.cp -r ./mygame m65:/GAMES/       # copy like cp: card paths are m65:/PATH
 m65.cd /GAMES                        # same as CHDIR "/GAMES",U12; kept by the MEGA65
 m65.cp demo.prg m65:                 # m65:NAME and plain NAME are relative to it
 m65.cp -rp m65:/GAMES ./backup       # whole trees out, keeping times
+zcat hdd.img.gz | m65.cp -v - m65:/HDD.IMG   # - = standard input (unpack on the fly)
 m65.mv /old.d81 /new.d81             # on the card
 m65.rm -r /GAMES/mygame
 m65.boot game.d81                    # copy to the card root, mount, reset, run the first program
@@ -264,7 +268,8 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   it with a quick trigger (a few ms); only if that fails do they wait for its beacon (sent once
   a second) and prefer a wired interface over WLAN. `M65_TARGET` skips all of that.
 - **Environment variables:** `M65_TARGET=fe80::…%if` (default: remembered or discovered),
-  `M65_IMAGE=card.img` (an SD card image instead of a MEGA65) and `M65_RESET=1` (reset after
+  `M65_IMAGE=card.img` (an SD card image instead of a MEGA65), `M65_PROGRESS=0|1` (progress
+  of large transfers: shown on a terminal by default, never in pipes or logs) and `M65_RESET=1` (reset after
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
   `m65.boot` or `m65.run`).
 - **Exit status:** 0 ok, 1 error (`m65.defrag`: 1 = fragmented files remain, 2 = error).

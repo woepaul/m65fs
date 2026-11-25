@@ -145,37 +145,60 @@ class Fat32VolumeWriteTest {
   // ---------------------------------------------------------------- contiguous rewrite policy
 
   @Test
-  void rewriteSameSizeStaysInPlace() throws IOException {
+  void rewriteSameSizeGoesToANewRunAndFreesTheOld() throws IOException {
     var e = vol.writeContent(vol.createFile(vol.root(), "A.BIN"), random(10 * bpc, 1));
     int first = e.firstCluster();
+    long freeBefore = vol.freeClusters();
     byte[] data = random(10 * bpc - 7, 2);
     e = vol.writeContent(e, data);
-    assertEquals(first, e.firstCluster());
+    assertNotEquals(first, e.firstCluster(), "never rewritten in place");
+    assertTrue(vol.isContiguous(e));
+    assertEquals(freeBefore, vol.freeClusters());
     assertArrayEquals(data, img.get("/A.BIN"));
   }
 
   @Test
-  void shrinkStaysInPlaceAndFreesTail() throws IOException {
+  void shrinkFreesAllOldClusters() throws IOException {
     var e = vol.writeContent(vol.createFile(vol.root(), "A.BIN"), random(10 * bpc, 1));
-    int first = e.firstCluster();
     long freeBefore = vol.freeClusters();
     byte[] data = random(3 * bpc, 2);
     e = vol.writeContent(e, data);
-    assertEquals(first, e.firstCluster());
-    assertEquals(List.of(new Extent(first, 3)), vol.extents(e));
+    assertEquals(3, vol.extents(e).getFirst().length());
     assertEquals(freeBefore + 7, vol.freeClusters());
     assertArrayEquals(data, img.get("/A.BIN"));
   }
 
   @Test
-  void growExtendsInPlaceWhenNeighboursAreFree() throws IOException {
-    var e = vol.writeContent(vol.createFile(vol.root(), "A.BIN"), random(2 * bpc, 1));
-    int first = e.firstCluster();
-    byte[] data = random(20 * bpc + 5, 2);
-    e = vol.writeContent(e, data);
-    assertEquals(first, e.firstCluster());
-    assertEquals(List.of(new Extent(first, 21)), vol.extents(e));
-    assertArrayEquals(data, img.get("/A.BIN"));
+  void anInterruptedRewriteLeavesTheOldContent() throws IOException {
+    byte[] old = random(10 * bpc, 1);
+    var e = vol.writeContent(vol.createFile(vol.root(), "A.BIN"), old);
+    // the new content breaks off half way (Ctrl-C, lost connection)
+    byte[] half = random(5 * bpc, 2);
+    var broken = new java.nio.channels.ReadableByteChannel() {
+      int pos;
+
+      @Override
+      public int read(java.nio.ByteBuffer dst) throws IOException {
+        if (pos >= half.length) {
+          throw new IOException("interrupted");
+        }
+        int n = Math.min(dst.remaining(), half.length - pos);
+        dst.put(half, pos, n);
+        pos += n;
+        return n;
+      }
+
+      @Override
+      public boolean isOpen() {
+        return true;
+      }
+
+      @Override
+      public void close() {}
+    };
+    var entry = e;
+    assertThrows(IOException.class, () -> vol.writeContent(entry, broken, old.length));
+    assertArrayEquals(old, img.get("/A.BIN"), "the old content is untouched");
   }
 
   @Test

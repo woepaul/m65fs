@@ -67,12 +67,15 @@ public final class M65fs {
 
   private final PrintStream out;
   private final PrintStream err;
+  private final InputStream in;
+  private boolean stdinUsed;
   private final Map<String, String> env;
   private String prog = "m65";
   private int status;
 
-  private M65fs(Map<String, String> env, PrintStream out, PrintStream err) {
+  private M65fs(Map<String, String> env, InputStream in, PrintStream out, PrintStream err) {
     this.env = env;
+    this.in = in;
     this.out = out;
     this.err = err;
   }
@@ -124,7 +127,12 @@ public final class M65fs {
 
   /** Runs {@code COMMAND [ARGS]}; returns the exit status. */
   public static int run(String[] args, Map<String, String> env, PrintStream out, PrintStream err) {
-    return new M65fs(env, out, err).dispatch(new ArrayList<>(List.of(args)));
+    return run(args, env, System.in, out, err);
+  }
+
+  /** As above, with {@code in} as standard input (for {@code m65.cp - DEST}). */
+  public static int run(String[] args, Map<String, String> env, InputStream in, PrintStream out, PrintStream err) {
+    return new M65fs(env, in, out, err).dispatch(new ArrayList<>(List.of(args)));
   }
 
   /** A failure reported as {@code m65.cmd: message}. */
@@ -419,6 +427,18 @@ public final class M65fs {
         throw new Failure("cannot create regular file '" + a.getLast() + "': Not a directory");
       }
       for (String s : sources) {
+        if (s.equals("-")) {
+          // standard input: zcat hdd.img.gz | m65.cp - m65:/HDD.IMG
+          if (dstIsDir) {
+            warn("'-' (standard input) needs a file name as target, not the directory '" + a.getLast() + "'");
+          } else if (stdinUsed) {
+            warn("'-' (standard input) can only be read once");
+          } else {
+            stdinUsed = true;
+            copyStdin(dst, f);
+          }
+          continue;
+        }
         Path src = path(fs, s);
         if (!Files.exists(src)) {
           warn("cannot stat '" + s + "': No such file or directory");
@@ -482,18 +502,136 @@ public final class M65fs {
       warn("'" + src + "' and '" + target + "' are the same file");
       return;
     }
-    // write-on-close channel on the card: if the new content does not fit contiguously the old
-    // file stays as it was (a generic copy would delete it first)
+    copyFile(src, target, f, f.contains('v') ? "'" + src + "' -> '" + target + "'" : null);
+  }
+
+  /**
+   * Standard input to {@code target}. On the card the content is collected on the PC first (it
+   * is written contiguously, which needs the size), then written; progress shows that part.
+   */
+  private void copyStdin(Path target, Set<Character> f) throws IOException {
+    if (Files.isDirectory(target)) {
+      warn("cannot overwrite directory '" + target + "' with non-directory");
+      return;
+    }
+    if (Files.exists(target) && f.contains('n')) {
+      return;
+    }
+    Mega65FileSystem to = target.getFileSystem() instanceof Mega65FileSystem m ? m : null;
+    long w0 = to == null ? 0 : to.bytesWritten();
+    var counted = new CountingInputStream(in);
+    CopyLine progress = !f.contains('v') ? null : new CopyLine(out, "'-' -> '" + target + "'", liveProgress(),
+        () -> to == null ? 0 : to.bytesWritten() - w0,
+        () -> to != null && counted.eof ? counted.count : 0);
+    copying(progress, "-", target, () -> writeTarget(counted, target));
+  }
+
+  /** Counts what it reads; {@code eof} once the end was reached. */
+  private static final class CountingInputStream extends java.io.FilterInputStream {
+    volatile long count;
+    volatile boolean eof;
+
+    CountingInputStream(InputStream in) {
+      super(in);
+    }
+
+    @Override
+    public int read() throws IOException {
+      int b = super.read();
+      if (b < 0) {
+        eof = true;
+      } else {
+        count++;
+      }
+      return b;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+      int n = super.read(b, off, len);
+      if (n < 0) {
+        eof = true;
+      } else {
+        count += n;
+      }
+      return n;
+    }
+
+    @Override
+    public void close() {
+      // standard input stays open
+    }
+  }
+
+  /**
+   * Writes everything from {@code src} to {@code target} and closes {@code src}. On the card a
+   * write-on-close channel: the new content goes to free clusters before the old ones are freed,
+   * so if it does not fit or the copy is interrupted the old file stays as it was (a generic copy
+   * would delete it first).
+   */
+  private static void writeTarget(InputStream src, Path target) throws IOException {
     OpenOption[] opts = {StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE};
-    try (InputStream in = Files.newInputStream(src); OutputStream o = Files.newOutputStream(target, opts)) {
-      in.transferTo(o);
+    try (src; OutputStream o = Files.newOutputStream(target, opts)) {
+      src.transferTo(o);
     }
-    if (f.contains('p')) {
-      Files.setLastModifiedTime(target, Files.getLastModifiedTime(src));
+  }
+
+  /** As above; {@code line} (if not null) is printed first, with progress while copying. */
+  private void copyFile(Path src, Path target, Set<Character> f, String line) throws IOException {
+    CopyLine progress = line == null ? null : copyLine(src, target, line);
+    copying(progress, src.toString(), target, () -> {
+      writeTarget(Files.newInputStream(src), target);
+      if (f.contains('p')) {
+        Files.setLastModifiedTime(target, Files.getLastModifiedTime(src));
+      }
+    });
+  }
+
+  private interface Copy {
+    void run() throws IOException;
+  }
+
+  /**
+   * Runs a copy and ends its line ({@code progress}, may be null): plain when done,
+   * {@code failed} on an error (reported after it), {@code interrupted} on Ctrl-C; without a
+   * line an interruption is reported on stderr, so it never looks like it completed.
+   */
+  private void copying(CopyLine progress, String src, Path target, Copy copy) throws IOException {
+    Runnable report = () -> {
+      err.println(prog + ": interrupted: '" + src + "' -> '" + target + "' not completed");
+      err.flush();
+    };
+    if (progress == null) {
+      Interruption.running(report);
     }
-    if (f.contains('v')) {
-      out.println("'" + src + "' -> '" + target + "'");
+    boolean ok = false;
+    try {
+      copy.run();
+      ok = true;
+    } finally {
+      Interruption.done(report);
+      if (progress != null) {
+        progress.close(ok ? "" : " failed");
+      }
     }
+  }
+
+  /**
+   * The {@code -v} line of a copy. Progress counts what really moves to and from the card (for a
+   * card target that happens when the file is closed, not while the stream is written).
+   */
+  private CopyLine copyLine(Path src, Path target, String text) throws IOException {
+    Mega65FileSystem from = src.getFileSystem() instanceof Mega65FileSystem m ? m : null;
+    Mega65FileSystem to = target.getFileSystem() instanceof Mega65FileSystem m ? m : null;
+    long r0 = from == null ? 0 : from.bytesRead();
+    long w0 = to == null ? 0 : to.bytesWritten();
+    long total = Files.size(src) * ((from == null ? 0 : 1) + (to == null ? 0 : 1));
+    return new CopyLine(out, text, liveProgress(),
+        () -> (from == null ? 0 : from.bytesRead() - r0) + (to == null ? 0 : to.bytesWritten() - w0), total);
+  }
+
+  private boolean liveProgress() {
+    return CopyLine.live(env, out);
   }
 
   /** {@code mv [-nfv] SOURCE... DEST} on the card, GNU mv semantics (overwrites by default). */
@@ -716,7 +854,7 @@ public final class M65fs {
     if (!resetAfter()) {
       args.addFirst("--no-reset");
     }
-    return Defrag.run(args.toArray(String[]::new), out, err);
+    return Defrag.run(args.toArray(String[]::new), out, err, env);
   }
 
   // ------------------------------------------------------------------ machine commands
@@ -735,8 +873,7 @@ public final class M65fs {
       if (local != null) {
         onCard = fs.getPath("/" + local.getFileName());
         if (!(Files.exists(onCard) && f.contains('n'))) {
-          copyFile(local, onCard, Set.of());
-          out.println("copied " + local + " -> " + CARD_PREFIX + onCard);
+          copyFile(local, onCard, Set.of(), "'" + local + "' -> '" + CARD_PREFIX + onCard + "'");
         }
       } else {
         onCard = fs.getPath(cardSource);
@@ -1026,7 +1163,7 @@ public final class M65fs {
       case "tree" -> "m65.tree [-d] [-L LEVEL] [DIR]";
       case "cd" -> "m65.cd [DIR]";
       case "pwd" -> "m65.pwd";
-      case "cp" -> "m65.cp [-rRnfpv] SOURCE... DEST      (card paths: m65:/PATH)";
+      case "cp" -> "m65.cp [-rRnfpv] SOURCE... DEST      (card paths: m65:/PATH; SOURCE - = standard input)";
       case "mv" -> "m65.mv [-nfv] SOURCE... DEST";
       case "rm" -> "m65.rm [-rRfv] PATH...";
       case "mkdir" -> "m65.mkdir [-pv] DIR...";

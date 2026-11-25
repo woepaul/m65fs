@@ -114,6 +114,28 @@ public final class Defragmenter {
             detail.isEmpty() ? "" : " (" + detail + ")");
       };
     }
+
+    /** The outcome without the path, e.g. {@code defragmented (3 fragments -> 1)}. */
+    public String outcomeText() {
+      return switch (outcome) {
+        case DEFRAGMENTED -> String.format("defragmented (%d fragments -> 1)", fragments);
+        default -> outcome.name().toLowerCase().replace('_', ' ') + (detail.isEmpty() ? "" : " (" + detail + ")");
+      };
+    }
+  }
+
+  /**
+   * Follows {@link #defragmentWithEvents} file by file (all methods are optional).
+   */
+  public interface Listener {
+    /** A file is about to be defragmented (again, for a retry); {@code size} in bytes. */
+    default void starting(Path path, long size) {}
+
+    /** The first attempt found no contiguous space; the file is tried again at the end. */
+    default void deferred(Path path) {}
+
+    /** The (final) result for a file. */
+    default void finished(Result result) {}
   }
 
   /** Scans the whole file system. Read-only. */
@@ -180,8 +202,20 @@ public final class Defragmenter {
    */
   public static List<Result> defragment(Mega65FileSystem fs, Collection<? extends Path> files,
       Consumer<Result> progress) throws IOException {
-    fs.ensureOpen();
     Consumer<Result> report = progress != null ? progress : _ -> {};
+    return defragmentWithEvents(fs, files, new Listener() {
+      @Override
+      public void finished(Result result) {
+        report.accept(result);
+      }
+    });
+  }
+
+  /** As {@link #defragment(Mega65FileSystem, Collection, Consumer)}, with start events too. */
+  public static List<Result> defragmentWithEvents(Mega65FileSystem fs, Collection<? extends Path> files,
+      Listener listener) throws IOException {
+    fs.ensureOpen();
+    Objects.requireNonNull(listener);
     record Item(Mega65Path path, long size) {}
     List<Item> todo = new ArrayList<>();
     for (Path p : files) {
@@ -193,18 +227,21 @@ public final class Defragmenter {
     List<Result> results = new ArrayList<>();
     List<Item> retry = new ArrayList<>();
     for (Item item : todo) {
+      listener.starting(item.path(), item.size());
       Result r = defragmentOne(fs, item.path());
       if (r.outcome() == Outcome.NO_CONTIGUOUS_SPACE) {
         retry.add(item);
+        listener.deferred(item.path());
       } else {
         results.add(r);
-        report.accept(r);
+        listener.finished(r);
       }
     }
     for (Item item : retry) {
+      listener.starting(item.path(), item.size());
       Result r = defragmentOne(fs, item.path());
       results.add(r);
-      report.accept(r);
+      listener.finished(r);
     }
     fs.volume().flush();
     return results;

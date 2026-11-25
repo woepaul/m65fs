@@ -31,7 +31,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * device (the MEGA65 SD card layout) or a bare volume starting at sector 0.
  *
  * <p><b>Files are always stored contiguously.</b> {@link #writeContent} lays out the complete
- * new content in one run of clusters (in place when possible, otherwise relocated) and throws
+ * new content in one run of free clusters (never in place, so an interruption leaves the old
+ * content) and throws
  * {@link NoContiguousSpaceException} rather than fragmenting a file. Directories may be
  * fragmented.
  *
@@ -329,13 +330,11 @@ public final class Fat32Volume implements AutoCloseable {
 
   /**
    * Replaces the content of a file with {@code size} bytes read from {@code src}, keeping the
-   * file contiguous:
-   * <ol>
-   *   <li>contiguous and big enough: rewritten in place (surplus clusters freed);
-   *   <li>contiguous and the following clusters are free: extended in place;
-   *   <li>otherwise: written to a new contiguous run, then the entry is switched over and the
-   *       old clusters are freed.
-   * </ol>
+   * file contiguous: the content is written to a new contiguous run of free clusters, then the
+   * entry is switched over and the old clusters are freed. Never rewritten in place, so an
+   * interruption (Ctrl-C, lost connection) leaves the complete old content, at worst plus lost
+   * clusters; overwriting therefore needs free space of the new size. The start cluster changes
+   * (a disk image mounted on the MEGA65 at that moment still points to the old clusters).
    *
    * @return the updated entry
    * @throws NoContiguousSpaceException if no free run is large enough; the file is unchanged
@@ -354,33 +353,22 @@ public final class Fat32Volume implements AutoCloseable {
       List<Extent> old = fat.extents(file.firstCluster());
       int oldLen = old.stream().mapToInt(Extent::length).sum();
 
-      enum Plan { EMPTY, IN_PLACE, SHRINK, EXTEND, RELOCATE }
-      Plan plan;
       int start = 0;
-      if (need == 0) {
-        plan = Plan.EMPTY;
-      } else if (old.size() == 1 && oldLen >= need) {
-        plan = oldLen == need ? Plan.IN_PLACE : Plan.SHRINK;
-        start = old.getFirst().first();
-      } else if (old.size() == 1 && rangeFree(old.getFirst().end(), old.getFirst().first() + need)) {
-        plan = Plan.EXTEND;
-        start = old.getFirst().first();
-      } else {
-        plan = Plan.RELOCATE;
+      if (need > 0) {
+        // the old clusters are still allocated, so the new run never overlaps them
         FatTable.FreeRun run = fat.findFreeRun(need, hint());
         if (run.length() < need) {
           throw new NoContiguousSpaceException(file.name(), need, run.length(), bpc);
         }
         start = run.start();
       }
-      LOG.log(Level.DEBUG, "write {0}: {1} bytes, {2} clusters, plan {3} at {4}", file.name(), size, need, plan, start);
+      LOG.log(Level.DEBUG, "write {0}: {1} bytes, {2} clusters at {3} (was {4} clusters)", file.name(), size, need,
+          start, oldLen);
 
-      // 1. data (for EXTEND/RELOCATE into clusters nobody references yet)
       if (need > 0) {
+        // 1. data, into clusters nobody references yet
         writeData(clusterLba(start), src, size);
-      }
-      // 2. make the new chain reachable before the entry points to it
-      if (plan == Plan.EXTEND || plan == Plan.RELOCATE) {
+        // 2. make the new chain reachable before the entry points to it
         fat.linkRun(start, need);
         fat.flush();
       }
@@ -394,15 +382,8 @@ public final class Fat32Volume implements AutoCloseable {
         b.put(off + 11, (byte) (b.get(off + 11) | DirEntry.ATTR_ARCHIVE));
         DirEntryCodec.setTimes(b, off, null, now, now);
       });
-      // 4. release what is no longer referenced
-      switch (plan) {
-        case SHRINK -> {
-          fat.linkRun(start, need);
-          fat.free(List.of(new Extent(start + need, oldLen - need)));
-        }
-        case EMPTY, RELOCATE -> fat.free(old);
-        default -> { }
-      }
+      // 4. release the old clusters
+      fat.free(old);
       fat.flush();
       if (need > 0) {
         fsInfo.setNextFree(start + need <= boot.maxCluster() ? start + need : 2);
@@ -513,18 +494,6 @@ public final class Fat32Volume implements AutoCloseable {
   }
 
   // ------------------------------------------------------------------ internals
-
-  private boolean rangeFree(int from, int toExclusive) throws IOException {
-    if (toExclusive - 1 > boot.maxCluster()) {
-      return false;
-    }
-    for (int c = from; c < toExclusive; c++) {
-      if (!fat.isFree(c)) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   private int hint() {
     long nf = fsInfo.nextFree();

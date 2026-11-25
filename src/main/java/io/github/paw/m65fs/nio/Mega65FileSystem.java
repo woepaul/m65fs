@@ -2,6 +2,7 @@ package io.github.paw.m65fs.nio;
 
 import io.github.paw.m65fs.block.BlockDevice;
 import io.github.paw.m65fs.block.CachingBlockDevice;
+import io.github.paw.m65fs.block.CountingBlockDevice;
 import io.github.paw.m65fs.block.ImageFileBlockDevice;
 import io.github.paw.m65fs.etherload.Etherload;
 import io.github.paw.m65fs.fat32.DirEntry;
@@ -69,14 +70,16 @@ public final class Mega65FileSystem extends FileSystem {
   private final int shadowMemoryLimit;
   private final Mega65FileStore store;
   private final Set<Channels.WriteChannel> writers = ConcurrentHashMap.newKeySet();
+  private final CountingBlockDevice traffic;
   private volatile Mega65Path workingDirectory;
   /** Whether the hypervisor keeps the working directory (so that it is shared with BASIC). */
   private volatile boolean hypervisorCwd;
   private volatile boolean open = true;
 
   private Mega65FileSystem(Mega65FileSystemProvider provider, String key, String authority, Fat32Volume volume,
-      RemoteSdSession session, Env env) {
+      RemoteSdSession session, CountingBlockDevice traffic, Env env) {
     this.provider = provider;
+    this.traffic = traffic;
     this.key = key;
     this.authority = authority;
     this.volume = volume;
@@ -93,8 +96,8 @@ public final class Mega65FileSystem extends FileSystem {
     Optional<Path> image = env.path("imageFile");
     boolean readOnly = env.bool("readOnly", false);
     if (image.isPresent()) {
-      BlockDevice dev = ImageFileBlockDevice.open(image.get(), readOnly);
-      return withDevice(provider, key, authority, dev, null, env);
+      var dev = new CountingBlockDevice(ImageFileBlockDevice.open(image.get(), readOnly));
+      return withDevice(provider, key, authority, dev, dev, null, env);
     }
     Target target = resolveTarget(authority, env);
     var options = RemoteSdSession.Options.defaults().withQuitOnClose(env.bool("quitOnClose", true));
@@ -106,19 +109,20 @@ public final class Mega65FileSystem extends FileSystem {
   /** Wraps an established session (package-private for tests with a simulated MEGA65). */
   static Mega65FileSystem attach(Mega65FileSystemProvider provider, String key, String authority,
       RemoteSdSession session, Env env) throws IOException {
-    BlockDevice dev = new CachingBlockDevice(new RemoteSdBlockDevice(session),
+    var traffic = new CountingBlockDevice(new RemoteSdBlockDevice(session));
+    BlockDevice dev = new CachingBlockDevice(traffic,
         env.integer("readAhead").orElse(CachingBlockDevice.DEFAULT_READ_AHEAD), CachingBlockDevice.DEFAULT_CAPACITY);
     if (env.bool("readOnly", false)) {
       dev = BlockDevice.readOnly(dev);
     }
-    return withDevice(provider, key, authority, dev, session, env);
+    return withDevice(provider, key, authority, dev, traffic, session, env);
   }
 
   private static Mega65FileSystem withDevice(Mega65FileSystemProvider provider, String key, String authority,
-      BlockDevice dev, RemoteSdSession session, Env env) throws IOException {
+      BlockDevice dev, CountingBlockDevice traffic, RemoteSdSession session, Env env) throws IOException {
     try {
       Fat32Volume volume = Fat32Volume.open(dev, Clock.system(env.zone()));
-      var fs = new Mega65FileSystem(provider, key, authority, volume, session, env);
+      var fs = new Mega65FileSystem(provider, key, authority, volume, session, traffic, env);
       fs.adoptHypervisorWorkingDirectory();
       return fs;
     } catch (IOException | RuntimeException e) {
@@ -288,6 +292,19 @@ public final class Mega65FileSystem extends FileSystem {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Bytes read from the card (or image) so far: what really came over the network, not what
+   * the cache answered. With {@link #bytesWritten()} the basis for progress displays.
+   */
+  public long bytesRead() {
+    return traffic.bytesRead();
+  }
+
+  /** Bytes written to the card (or image) so far, including FAT and directory sectors. */
+  public long bytesWritten() {
+    return traffic.bytesWritten();
   }
 
   // ------------------------------------------------------------------ working directory

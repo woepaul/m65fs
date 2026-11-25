@@ -28,11 +28,19 @@ public final class Defrag {
   private Defrag() {}
 
   public static void main(String[] args) {
-    System.exit(run(args, System.out, System.err));
+    System.exit(run(args, System.out, System.err, System.getenv()));
   }
 
   /** Runs the tool; returns the exit status. */
   public static int run(String[] args, PrintStream out, PrintStream err) {
+    return run(args, out, err, Map.of());
+  }
+
+  /**
+   * Runs the tool; {@code env} decides about progress fields (see {@code M65_PROGRESS}).
+   * Returns the exit status.
+   */
+  public static int run(String[] args, PrintStream out, PrintStream err, Map<String, String> sysenv) {
     boolean fix = false;
     boolean reset = true;
     String target = null;
@@ -88,7 +96,44 @@ public final class Defrag {
         return 1;
       }
       out.println("defragmenting ...");
-      List<Defragmenter.Result> results = Defragmenter.defragment(fs, report.paths(), r -> out.println("  " + r));
+      boolean live = CopyLine.live(sysenv, out);
+      int total = report.files().size();
+      int[] finished = {0};
+      // Ctrl-C: the file being moved keeps its old clusters until its entry is switched, so the
+      // card stays consistent; say how far it got
+      Runnable interrupted = () -> {
+        err.println("defrag: interrupted after " + finished[0] + " of " + total
+            + " file(s); the others are unchanged (still fragmented), run again to continue");
+        err.flush();
+      };
+      Interruption.running(interrupted);
+      List<Defragmenter.Result> results;
+      try {
+        results = Defragmenter.defragmentWithEvents(fs, report.paths(), new Defragmenter.Listener() {
+          private CopyLine line;
+
+          @Override
+          public void starting(Path path, long size) {
+            // a file is read and written once: progress counts both against twice its size
+            long base = fs.bytesRead() + fs.bytesWritten();
+            line = new CopyLine(out, "  " + path, live, () -> fs.bytesRead() + fs.bytesWritten() - base, 2 * size)
+                .interruptedSuffix(": interrupted");
+          }
+
+          @Override
+          public void deferred(Path path) {
+            line.close(": no contiguous space yet, retried at the end");
+          }
+
+          @Override
+          public void finished(Defragmenter.Result r) {
+            line.close(": " + r.outcomeText());
+            finished[0]++;
+          }
+        });
+      } finally {
+        Interruption.done(interrupted);
+      }
       long left = results.stream()
           .filter(r -> r.outcome() == Defragmenter.Outcome.NO_CONTIGUOUS_SPACE).count();
       long done = results.stream().filter(r -> r.outcome() == Defragmenter.Outcome.DEFRAGMENTED).count();

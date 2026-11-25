@@ -45,6 +45,7 @@ directory on purpose; run `m65.pwd` first when a relative path matters.
 |---|---|
 | `M65_TARGET=fe80::…%eth0` | Address of the MEGA65 (default: remembered in `~/.cache/m65fs/target` from the last discovery, which prefers wired interfaces) |
 | `M65_IMAGE=card.img` | Work on an SD card image file instead of a MEGA65 (file tools only) |
+| `M65_PROGRESS=0` / `1` | Progress of large transfers (`m65.cp -v`, `m65.boot`, `m65.defrag --fix`): by default shown only on a terminal; `0` never, `1` always |
 | `M65_RESET=1` | Reset the MEGA65 after each file tool. By default it keeps showing the transfer screen until `m65.reset`, `m65.boot` or `m65.run` |
 
 Exit status: 0 = ok, 1 = error, with the message on stderr in coreutils style
@@ -70,14 +71,17 @@ and the computer needs IPv6 on the same network segment.
 | `m65.cat FILE…` | Print files | no |
 | `m65.stat PATH…` | Size, times, 8.3 name, attributes, contiguous, start sector | no |
 | `m65.df [--contiguous]` | Size, used and free; `--contiguous` adds the largest free run (reads the whole FAT, ~30 s) | no |
-| `m65.cp [-rRnfpv] SOURCE… DEST` | Copy with **GNU cp semantics**, computer→card, card→computer or card→card. `-r` is needed for directories (whole trees); several sources need a directory DEST; **existing files are overwritten** unless `-n`; `-p` keeps modification times | yes, if DEST is `m65:` |
+| `m65.cp [-rRnfpv] SOURCE… DEST` | Copy with **GNU cp semantics**, computer→card, card→computer or card→card. `-r` is needed for directories (whole trees); several sources need a directory DEST; **existing files are overwritten** unless `-n`; `-p` keeps modification times; SOURCE `-` = standard input (`zcat x.img.gz \| m65.cp - m65:/X.IMG`, DEST must name the file) | yes, if DEST is `m65:` |
 | `m65.mv [-nfv] SOURCE… DEST` | Move or rename **on the card**; overwrites unless `-n` | yes |
 | `m65.rm [-rRfv] PATH…` | Delete; `-r` directories with contents, `-f` ignore missing; refuses `/` | yes |
 | `m65.mkdir [-pv] DIR…` | Create directories | yes |
 | `m65.defrag [--fix] [DIR]` | List fragmented files; `--fix` defragments them | only with `--fix` |
 
-Files written to the card are always contiguous. If an overwrite doesn't fit contiguously,
-`m65.cp` fails and the old file stays as it was.
+Files written to the card are always contiguous. An overwrite goes to free clusters first and
+only then replaces the old file, so it needs free space of the file's size; if that doesn't fit
+contiguously, `m65.cp` fails and the old file stays as it was. Ctrl-C during a copy or
+`m65.defrag --fix` is safe: the old content stays, and the output says `interrupted` (the `-v`
+line, or a message on stderr; defrag tells how many files it finished).
 
 ## Machine
 

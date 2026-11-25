@@ -122,6 +122,8 @@ class DefragmenterTest {
     out.reset();
     assertEquals(0, Defrag.run(new String[] {"--image", image, "--fix"}, new PrintStream(out), new PrintStream(err)));
     assertTrue(out.toString().contains("2 defragmented, 0 still fragmented"), out.toString());
+    // one line per file: the path first (with progress on a terminal), then the outcome
+    assertTrue(out.toString().contains("  /games/B.PRG: defragmented ("), out.toString());
     img.fsck();
 
     out.reset();

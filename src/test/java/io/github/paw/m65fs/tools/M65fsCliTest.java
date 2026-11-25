@@ -232,6 +232,26 @@ class M65fsCliTest {
   }
 
   @Test
+  void cpReadsStandardInputForDash() throws IOException {
+    byte[] data = bytes(300_000, 9);
+    String image = img.file().toString();
+    // zcat hdd.img.gz | m65.cp -v - m65:/FROM.BIN
+    assertEquals(0, M65fs.run(new String[] {"cp", "-v", "-", "m65:/FROM.BIN"}, Map.of("M65_IMAGE", image),
+        new java.io.ByteArrayInputStream(data), new PrintStream(out), new PrintStream(err)), err.toString());
+    assertEquals("'-' -> '/FROM.BIN'" + System.lineSeparator(), out());
+    Path back = tmp.resolve("back.bin");
+    assertEquals(0, m65("cp", "m65:/FROM.BIN", back.toString()));
+    assertArrayEquals(data, Files.readAllBytes(back));
+    // into a directory there is no name to use
+    assertEquals(0, m65("mkdir", "/D"));
+    out.reset();
+    err.reset();
+    assertEquals(1, M65fs.run(new String[] {"cp", "-", "m65:/D"}, Map.of("M65_IMAGE", image),
+        new java.io.ByteArrayInputStream(data), new PrintStream(out), new PrintStream(err)));
+    assertTrue(err.toString().contains("needs a file name"), err.toString());
+  }
+
+  @Test
   void commandFromProgramName() {
     assertArrayEquals(new String[] {"ls", "-l"}, M65fs.withInvokedCommand("/usr/local/bin/m65.ls", new String[] {"-l"}));
     assertArrayEquals(new String[] {"ls"}, M65fs.withInvokedCommand("m65", new String[] {"ls"}));
