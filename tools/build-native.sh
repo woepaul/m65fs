@@ -52,7 +52,12 @@ JAR=$(ls "$HERE"/target/m65fs-*.jar | grep -v -e sources -e javadoc | head -1)
 echo "== native-image ($("$NI" --version | head -1))"
 OUT="$HERE/target/native"
 mkdir -p "$OUT"
-"$NI" -jar "$JAR" -o "$OUT/m65" -march=compatibility "$@"
+# Windows: the console shows text in its code page (usually 850 or 437), which the JDK detects
+# at run time, but native-image includes only a few charsets, so it fell back to UTF-8 and
+# "SHIFT+£" came out as "SHIFT+┬ú". All charsets cost about 5.8 MB, so only for Windows.
+EXTRA=()
+[[ $PLATFORM == windows-* ]] && EXTRA+=(-H:+AddAllCharsets)
+"$NI" -jar "$JAR" -o "$OUT/m65" -march=compatibility ${EXTRA[@]+"${EXTRA[@]}"} "$@"
 
 BIN="$OUT/m65"
 [[ $PLATFORM == windows-* ]] && BIN="$OUT/m65.exe"
