@@ -4,25 +4,25 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
-## Unreleased
+## 0.2.2 (2026-11-26)
 
-- The hypervisor change for the shared working directory (`m65.cd`, `m65.pwd`; mega65-core
-  PR #985) is merged: it is in MEGA65 core development build 179 or later
-  (https://builder.mega65.org/job/mega65-core/job/development/179/), so no patched
-  `HICKUP.M65` is needed any more. Docs and `m65.cd`'s error message point there.
-- Fix: after leaving the transfer helper (RUN/STOP, or `m65.reset` after a tool), BASIC 65
-  could start with `?FILE NOT FOUND ERROR` or `74,DRIVE NOT READY`. The helper was loaded at
-  $0800, over BASIC's workspace, and BASIC reads some of it unchecked after a reset: the
-  default drive at $1106 then came from a helper code byte (with 0.2.1's helper by chance a
-  harmless one). The helper now lives at $4000 and leaves $0000-$2FFF alone
-  (`HELPER_VERSION` 6).
+- Fix: after leaving the transfer helper (RUN/STOP on the MEGA65, or `m65.reset` after a
+  tool), BASIC 65 could start with `?FILE NOT FOUND ERROR` or `74,DRIVE NOT READY`. The
+  helper was loaded at $0800, over BASIC's workspace, and BASIC reads some of it unchecked
+  after a reset: the default drive at $1106 then came from whatever helper code byte was
+  there (0.2.0 and 0.2.1 were lucky with theirs; any change of the helper could break it).
+  The helper now lives at $4000 and leaves $0000-$2FFF alone (`HELPER_VERSION` 6).
 - The helper's title row says what RUN/STOP does right now: `run/stop: quit to basic (idle)`,
   `run/stop: no action (busy)`, or after a fatal error `run/stop: reset (error)`. It always
-  said `quit to basic (idle)`, also while busy (`HELPER_VERSION` 5).
+  said `quit to basic (idle)`, also while busy.
 - Windows: messages and file names with characters outside ASCII came out garbled in the
   console (`SHIFT+£` as `SHIFT+┬ú`): m65 writes UTF-8, the console shows its code page
   (usually 850 or 437). The `m65.*.cmd` wrappers now switch the console to UTF-8 for the
   command and back to its code page afterwards (calling `m65.exe` directly is not covered).
+- The hypervisor change for the shared working directory (`m65.cd`, `m65.pwd`; mega65-core
+  PR #985) is merged: it is in MEGA65 core development build 179 or later
+  (https://builder.mega65.org/job/mega65-core/job/development/179/), so no patched
+  `HICKUP.M65` is needed any more. Docs and `m65.cd`'s error message point there.
 
 ## 0.2.1 (2026-11-25)
 
