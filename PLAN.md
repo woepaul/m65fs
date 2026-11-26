@@ -324,6 +324,7 @@ library, not a best effort:
 | M7 ✅ | Launching: boot D81s and run PRGs in C64 (GO64) and MEGA65 mode, reset/detach | hardware markers |
 | M8 ✅ | Defragmentation: scan report + optional fix, `Defrag` CLI (jar main class) | image tests + hardware (file fragmented on purpose) |
 | M9 ✅ | `m65.*` tools (coreutils style: ls/tree/cp/mv/rm/mkdir/cat/stat/df + boot/run/reset/mount/peek/discover/defrag), GraalVM native binary, agent skill in `.claude/skills/m65fs` | CLI tests on images + hardware (native) |
+| M10 | Bash tab completion for card paths (`m65:/abs/path`, `m65:rel/path`, and plain paths for card-only tools) and options; `m65 completion bash\|install\|uninstall`; `m65 install\|uninstall` creates or removes its own `m65.*` links (simpler `install.sh`), see §2.6 | completion tests (script driven by `COMP_*` variables, image-backed); hardware: TAB with and without a running helper |
 
 M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDevice`.
 
@@ -408,6 +409,64 @@ M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDe
 * **Blocking API:** NIO channels are blocking; the transport polls with `Selector.select(timeout)`
   rather than the C busy loop (`usleep(20)`). Virtual‑thread friendly.
 * FAT timestamps use local time; convert via a configurable `ZoneId` (default system).
+
+### 2.6 Shell completion (M10, planned)
+
+Goal: TAB in bash completes card paths like local ones, in every tool that takes them.
+
+* **Which words are card paths:** in `cp` (and any tool that takes both): only words starting
+  with `m65:` (`m65:/abs/path`, `m65:rel/path`, relative to the shared working directory);
+  other words get bash's normal file completion. In card-only tools (`ls`, `tree`, `cd`, `rm`,
+  `mkdir`, `mv`, `cat`, `stat`, `dsplit`, `mount`, `defrag`): plain `/PATH` and `PATH` too,
+  except where a tool also takes local paths (`dsplit`: a local directory that exists wins,
+  as in the tool itself).
+* **Where the names come from:** a hidden subcommand, e.g. `m65 __complete WORD`, prints the
+  matching entries of the directory in WORD (one per line, directories with a trailing `/`),
+  using the library. A bash script (`tools/completion/m65.bash`) calls it.
+* **Never take over the MEGA65 for a TAB:** completion uses only a helper that is already
+  running and free (`RemoteSdSession.attachRunning`, no trigger, no bootstrap). If the MEGA65
+  is in BASIC or running a program, or the helper is busy, completion offers nothing for card
+  paths (silently, no message, no waiting).
+* **Quiet on the MEGA65:** no log lines on the helper's screen for completion sessions
+  (`showOnMega65` off), so the log is not flooded by TABs.
+* **Fast enough:** a session with the running helper costs about 40 ms, plus one directory
+  read; a short cache (a few seconds, keyed by directory) in `~/.cache/m65fs/` keeps repeated
+  TABs from asking again.
+* **Bash details:** `:` is in `COMP_WORDBREAKS`, so `m65:/x` arrives split; handle it like
+  bash-completion's `__ltrim_colon_completions` (or `_get_comp_words_by_ref -n :`). Names with
+  spaces and special characters must come back escaped; `compopt -o nospace` after a
+  directory, `-o filenames` for local words.
+* **Options:** from each tool's usage line (`--help`), e.g. `-r`, `--dry-run`, `-L`.
+* **Installation, from the binary itself:** the completion script is a resource in the `m65`
+  binary (so it always matches the version), and `m65` manages it:
+  * `m65 completion bash`: prints the script (for `source <(m65 completion bash)` in
+    `~/.bashrc`, or for packagers).
+  * `m65 completion install`: installs it for bash-completion's lazy loading in
+    `${XDG_DATA_HOME:-~/.local/share}/bash-completion/completions/`: one file `m65` plus an
+    entry for every `m65.*` command (bash-completion looks files up by command name), each
+    marked as written by m65fs. Prints what it did and that new shells pick it up (or
+    `source` the file for the current one). Running it again after an update replaces the
+    files.
+  * `m65 completion uninstall`: removes exactly the files it installed (only those with the
+    m65fs marker), nothing else.
+  * The release archive's README says to run it once.
+* **The binary sets up its own commands:** `m65 install` / `m65 uninstall`, so that only the
+  binary knows which `m65.*` commands exist (today `tools/install.sh`,
+  `tools/build-native.sh` and the native workflow ask `m65 --list-commands` and create the
+  links, or check them, themselves).
+  * `m65 install`: creates the `m65.CMD` entries next to the running binary (its own path:
+    `/proc/self/exe` or `ProcessHandle`): relative symlinks `m65.ls -> m65` on Linux and
+    macOS, `m65.ls.cmd` wrappers on Windows (as the release archive has them). An existing
+    file of that name that is not an m65 link or wrapper is left alone (with a warning).
+    Entries for commands that no longer exist (e.g. `m65.split`, renamed to `m65.dsplit`) are
+    removed. Then, on Linux and macOS, `m65 completion install` (`--no-completion` to skip).
+  * `m65 uninstall`: removes the `m65.*` links and wrappers next to the binary that point to
+    it, and the completion files; the binary itself stays (the user deletes it).
+  * `tools/install.sh` shrinks to: build the native binary, copy it to DIR, run
+    `DIR/m65 install`. `tools/build-native.sh` and the release packaging (each platform's
+    archive is built on that platform) can do the same; `--list-commands` stays for the
+    archive check and for compatibility.
+* **Later:** zsh and fish (the `__complete` subcommand is shell independent).
 
 ---
 
