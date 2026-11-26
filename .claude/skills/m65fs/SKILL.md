@@ -34,9 +34,9 @@ case-insensitively like FAT (`/GAMES/x.d81` = `/games/X.D81`); long names are su
 **Working directory:** relative card paths (`m65:GAMES`, `GAMES`, `m65:` alone) start from the
 working directory, which `m65.cd DIR` changes and `m65.pwd` prints. The MEGA65 itself keeps it,
 so it lasts from one tool to the next and is the same one as `CHDIR "DIR",U12` in BASIC: what
-the user chose in BASIC is where relative paths start. This needs a hypervisor with
-`trap_dos_getcwd`; with an older one, and for `M65_IMAGE`, the working directory is always `/`
-and `m65.cd` fails. **Use absolute paths in scripts** unless the user works with a working
+the user chose in BASIC is where relative paths start. This needs MEGA65 core development
+build 179 or later (https://builder.mega65.org/job/mega65-core/job/development/179/); with an older core, and for `M65_IMAGE`, the working directory is
+always `/` and `m65.cd` fails. **Use absolute paths in scripts** unless the user works with a working
 directory on purpose; run `m65.pwd` first when a relative path matters.
 
 **Environment:**
@@ -160,7 +160,7 @@ line, or a message on stderr; defrag tells how many files it finished).
 | `… File exists` | `m65.mkdir` target exists (`-p` ignores that) |
 | `no contiguous free space` | No free run large enough. Free up space, or check with `m65.defrag`. The old file is unchanged |
 | `only images in the root directory can be mounted` | Copy the image to `m65:/` first; with a working directory set, give the image as `m65:/NAME.D81` |
-| `the MEGA65's hypervisor does not keep a working directory` | `m65.cd` needs the patched hypervisor (see the project README); use absolute paths instead |
+| `the MEGA65's hypervisor does not keep a working directory` | `m65.cd` needs MEGA65 core development build 179 or later (https://builder.mega65.org/job/mega65-core/job/development/179/); use absolute paths instead |
 | `an image file has no working directory` | With `M65_IMAGE`, use absolute paths |
 | `program loads at $XXXX: only $0801 … and $2001 …` | A machine-code PRG: ask for the start address and use `m65.run --jump HEX` |
 | `session … failed earlier` / timeouts | Network trouble. The tool can be run again; for writes, see safety rule 4 |

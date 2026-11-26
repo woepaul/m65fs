@@ -17,7 +17,7 @@ offsets), `etherload.Etherload`, `remotesd.RemoteSdSession` / `Request` / `Respo
 1. The host sends the trigger frame. Hyppo's `ethernet_remote_trap`
    (`mega65-core/src/hyppo/task.asm`) closes all files, sets a C64 memory map (registers 0,
    SP = $01FF, interrupts off, CPU port $3F, C64 I/O, plain 40-column screen), saves the
-   current disk and working directory (patched hypervisor, see `trap_dos_restorecwd`), changes
+   current disk and working directory (core development build 179 or later, see `trap_dos_restorecwd`), changes
    to the root directory and runs `ETHLOAD.M65` from colour RAM.
 2. `ETHLOAD.M65` (`mega65-core/src/utilities/etherload.a65`) switches to the MEGA65 I/O
    personality and the fast CPU, MAPs the Ethernet buffers at $6000–$7FFF (and itself at

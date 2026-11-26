@@ -15,8 +15,8 @@ those of mega65-tools' `mega65_ftp -e` and `etherload`, reduced to what m65fs ne
   built as one native binary (GraalVM). A command such as `m65.ls /` takes about 0.1 s,
   writing runs at about 450 KiB/s and reading at about 950 KiB/s (see `CHANGELOG.md`).
 - **A working directory shared with BASIC:** `m65.cd /GAMES` is the same as
-  `CHDIR "/GAMES",U12`, and relative card paths start where BASIC left off (needs a patched
-  hypervisor, see [What you need](#what-you-need)).
+  `CHDIR "/GAMES",U12`, and relative card paths start where BASIC left off (needs MEGA65 core
+  [development build 179](https://builder.mega65.org/job/mega65-core/job/development/179/) or later, see [What you need](#what-you-need)).
 - **Push and run software with one command:** `m65.boot` boots a D81 disk image and
   `m65.run` starts a PRG, in MEGA65 mode or in C64 mode (as entered with `GO64`).
   `m65.reset` gives you the machine back.
@@ -77,7 +77,7 @@ ls /` runs `m65.ls /`, and so on. It is also the library.
 | | Required | Optional |
 |---|---|---|
 | **Running the tools** | Java 25, or nothing with the native binary | |
-| **On the MEGA65** | a standard SD card (`ETHLOAD.M65` in the root), Ethernet, remote mode (DIP switch 2 or SHIFT+£) | the hypervisor patch for the shared working directory ([mega65-core#985](https://github.com/MEGA65/mega65-core/pull/985)) |
+| **On the MEGA65** | a standard SD card (`ETHLOAD.M65` in the root), Ethernet, remote mode (DIP switch 2 or SHIFT+£) | for `m65.cd` / `m65.pwd` (working directory shared with BASIC): MEGA65 core [development build 179](https://builder.mega65.org/job/mega65-core/job/development/179/) or later |
 | **Building** | the Maven wrapper (`./mvnw`, fetches Maven and the Java build plugins) | GraalVM for the native binary (downloaded by `tools/build-native.sh`); ACME 0.97+ to rebuild the MEGA65 code (the built blobs are in the repository); `dosfstools` and `mtools` for the image tests |
 
 Nothing has to be installed on the MEGA65: everything m65fs runs there is its own small 45GS02
@@ -110,14 +110,14 @@ is the original design plan, written against mega65-tools' programs.
 * Remote mode on, which makes the MEGA65 send its "mega65" discovery beacon: DIP switch 2 on,
   or press SHIFT+£.
 * Nothing to install on the card. The MEGA65 code is bundled (see [Blobs](#blobs)).
-* Optional, for a working directory shared with BASIC (`m65.cd`): a hypervisor with
-  `trap_dos_getcwd` ($0A) and `trap_dos_restorecwd` ($4C). The stock hypervisor changes to
-  the root directory on every Ethernet trigger and forgets the directory; the patch proposed
-  upstream ([issue #984](https://github.com/MEGA65/mega65-core/issues/984),
-  [PR #985](https://github.com/MEGA65/mega65-core/pull/985), branch `hyppo-preserve-cwd` of
-  [woepaul/mega65-core](https://github.com/woepaul/mega65-core)) saves it, and the helper
-  returns to it when it starts. To try it without flashing a core, put the patched `HICKUP.M65` into the card root
-  and power-cycle (delete it to go back).
+* For a working directory shared with BASIC (`m65.cd`, `m65.pwd`): MEGA65 core
+  [development build 179](https://builder.mega65.org/job/mega65-core/job/development/179/) or later (and its `sdcard-files`, including `ETHLOAD.M65`, in the
+  card root). Its hypervisor has `trap_dos_getcwd` ($0A) and `trap_dos_restorecwd` ($4C):
+  older hypervisors change to the root directory on every Ethernet trigger and forget the
+  directory; since build 179 the trigger saves it, and the helper returns to it when it starts
+  ([issue #984](https://github.com/MEGA65/mega65-core/issues/984),
+  [PR #985](https://github.com/MEGA65/mega65-core/pull/985), merged 2026-11-26). With an
+  older core everything else works; relative paths then start at `/`.
 
 ## Opening a file system
 
@@ -269,9 +269,9 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
 - **`m65.mv`** works on the card only.
 - **`m65.cd`** / **`m65.pwd`**: the MEGA65 keeps the working directory, so it holds from one
   tool to the next and BASIC sees it too (`DIR U12`), and a `CHDIR` in BASIC is where
-  relative card paths start. This needs a hypervisor with `trap_dos_getcwd` and
-  `trap_dos_restorecwd` (see below); otherwise relative paths start at `/` and `m65.cd`
-  reports an error. `m65.boot`, `m65.run` and `m65.reset` keep it too: BASIC starts in it.
+  relative card paths start. This needs MEGA65 core
+  [development build 179](https://builder.mega65.org/job/mega65-core/job/development/179/) or later (see below); with an older core relative paths start
+  at `/` and `m65.cd` reports an error. `m65.boot`, `m65.run` and `m65.reset` keep it too: BASIC starts in it.
 - **Finding the MEGA65:** the tools remember its address in `~/.cache/m65fs/target` and check
   it with a quick trigger (a few ms); only if that fails do they wait for its beacon (sent once
   a second) and prefer a wired interface over WLAN. `M65_TARGET` skips all of that.

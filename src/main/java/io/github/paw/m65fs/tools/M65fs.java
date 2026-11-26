@@ -301,7 +301,8 @@ public final class M65fs {
       if (!fs.isWorkingDirectoryShared()) {
         throw new Failure(fs.target().isEmpty()
             ? "an image file has no working directory (use absolute paths)"
-            : "the MEGA65's hypervisor does not keep a working directory (needs one with trap_dos_getcwd)");
+            : "the MEGA65's hypervisor does not keep a working directory (needs MEGA65 core development "
+                + "build 179 or later: https://builder.mega65.org/job/mega65-core/job/development/179/)");
       }
       fs.setWorkingDirectory(fs.getPath(cardPath(dir)));
       return 0;

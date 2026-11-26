@@ -6,6 +6,10 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 
 ## Unreleased
 
+- The hypervisor change for the shared working directory (`m65.cd`, `m65.pwd`; mega65-core
+  PR #985) is merged: it is in MEGA65 core development build 179 or later
+  (https://builder.mega65.org/job/mega65-core/job/development/179/), so no patched
+  `HICKUP.M65` is needed any more. Docs and `m65.cd`'s error message point there.
 - Fix: after leaving the transfer helper (RUN/STOP, or `m65.reset` after a tool), BASIC 65
   could start with `?FILE NOT FOUND ERROR` or `74,DRIVE NOT READY`. The helper was loaded at
   $0800, over BASIC's workspace, and BASIC reads some of it unchecked after a reset: the
