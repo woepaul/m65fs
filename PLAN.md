@@ -466,6 +466,15 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
     `DIR/m65 install`. `tools/build-native.sh` and the release packaging (each platform's
     archive is built on that platform) can do the same; `--list-commands` stays for the
     archive check and for compatibility.
+* **Resources in the binary, compressed:** everything `m65 install` and `m65 completion` write
+  (the bash script, later zsh and fish, the Windows `.cmd` wrapper template) lives in one zip
+  resource (e.g. `io/github/paw/m65fs/install.zip`, built from `src/main/install/` at build
+  time), read with `ZipInputStream`. native-image stores resources uncompressed, so this keeps
+  the cost in the image to the compressed size. Check in the build: the image size before and
+  after (`ls -l target/native/m65`), and whether `java.util.zip`'s inflater is in the image
+  anyway (the JDK pulls it in for other things); if it is not and would cost more than the
+  zip saves, store the files plain instead. A test makes sure the zip and its sources match
+  (like the helper blob check in CI).
 * **Later:** zsh and fish (the `__complete` subcommand is shell independent).
 
 ---
