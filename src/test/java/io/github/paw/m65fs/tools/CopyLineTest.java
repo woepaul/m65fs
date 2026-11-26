@@ -93,9 +93,14 @@ class CopyLineTest {
   }
 
   @Test
-  void durationsAreRoundedToMinutes() {
-    assertEquals("<1 min", CopyLine.duration(0));
-    assertEquals("<1 min", CopyLine.duration(59));
+  void durationsAreRoundedUpToTenSecondsThenMinutes() {
+    assertEquals("<10 s", CopyLine.duration(0));
+    assertEquals("<10 s", CopyLine.duration(9));
+    assertEquals("10 s", CopyLine.duration(10));
+    assertEquals("20 s", CopyLine.duration(11));
+    assertEquals("50 s", CopyLine.duration(50));
+    assertEquals("1 min", CopyLine.duration(51));
+    assertEquals("1 min", CopyLine.duration(59));
     assertEquals("1 min", CopyLine.duration(60));
     assertEquals("2 min", CopyLine.duration(61));
     assertEquals("59 min", CopyLine.duration(59 * 60));
@@ -121,8 +126,8 @@ class CopyLineTest {
     done.set(6_000);
     clock.set(12 * s);
     Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
-    // the window follows the rate: 5,400 bytes in the last 6 s, 4,000 left
-    assertEquals("'a' -> 'b' [ 60%] (<1 min)", rendered(bytes.toString()));
+    // the window follows the rate: 5,400 bytes in the last 6 s, 4,000 left (4.4 s)
+    assertEquals("'a' -> 'b' [ 60%] (<10 s)", rendered(bytes.toString()));
     l.close();
     String all = bytes.toString();
     assertEquals("'a' -> 'b'", rendered(all.substring(0, all.length() - System.lineSeparator().length())),
@@ -146,7 +151,7 @@ class CopyLineTest {
     l.simulateInterrupt();
     l.close();
     assertEquals(before + " interrupted" + System.lineSeparator(), bytes.toString(), "only the suffix is added");
-    assertTrue(rendered(bytes.toString()).matches("'a' -> 'b' \\[ 42%\\] \\(.* min\\) interrupted"),
+    assertTrue(rendered(bytes.toString()).matches("'a' -> 'b' \\[ 42%\\] \\(30 s\\) interrupted"),
         rendered(bytes.toString()));
   }
 

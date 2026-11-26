@@ -118,10 +118,16 @@ final class CopyLine implements AutoCloseable {
     return duration((long) Math.ceil(left * (double) dt / moved / 1e9));
   }
 
-  /** "<1 min", "8 min", "1 h 05 min" (minutes, rounded up: seconds would only flicker). */
+  /**
+   * "<10 s", "20 s" … "50 s", "8 min", "1 h 05 min": below a minute in 10 s steps, then
+   * minutes, rounded up (single seconds would only flicker).
+   */
   static String duration(long seconds) {
-    if (seconds < 60) {
-      return "<1 min";
+    if (seconds < 10) {
+      return "<10 s";
+    }
+    if (seconds <= 50) {
+      return (seconds + 9) / 10 * 10 + " s";
     }
     long minutes = (seconds + 59) / 60;
     return minutes < 60 ? minutes + " min" : String.format("%d h %02d min", minutes / 60, minutes % 60);
