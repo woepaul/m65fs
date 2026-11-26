@@ -5,6 +5,7 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.Map;
 import java.util.function.LongSupplier;
 
@@ -12,22 +13,27 @@ import java.util.function.LongSupplier;
  * One line of output for something that moves a lot of data ({@code m65.cp -v},
  * {@code m65.boot}, {@code m65.defrag --fix}): the text ({@code 'src' -> 'dst'}) right away,
  * then, if it takes longer than {@code delay}, a progress field {@code " [ 66%]"} that is
- * updated in place, and on {@link #close()} the field is cleared again and the line ends
- * (optionally after a suffix, e.g. a result). A finished line therefore looks the same with or
- * without progress, also in logs.
+ * updated in place, from {@link #ETA_AFTER} on with the estimated time left
+ * ({@code " [ 66%] (8 min)"}), and on {@link #close()} the field is cleared again and the line
+ * ends (optionally after a suffix, e.g. a result). A finished line therefore looks the same with
+ * or without progress, also in logs.
  */
 final class CopyLine implements AutoCloseable {
 
   static final Duration DELAY = Duration.ofSeconds(1);
   static final Duration INTERVAL = Duration.ofMillis(250);
+  /** The estimate appears after this long (the start is slow: lookups, first packets). */
+  static final Duration ETA_AFTER = Duration.ofSeconds(5);
+  /** The rate behind the estimate is measured over this window (so it follows changes). */
+  static final Duration RATE_WINDOW = Duration.ofSeconds(10);
   private static final String FIELD = " [%3d%%]";
-  private static final int WIDTH = 7;
 
   private final PrintStream out;
   private final Thread ticker;
   private volatile String interruptedSuffix = " interrupted";
   private final Runnable onInterrupt = () -> end(interruptedSuffix, false);
-  private volatile boolean shown;
+  private int shown; // characters of the field on screen; guarded by out
+  private int lastPct = -1; // guarded by out
   private boolean ended; // guarded by out
 
   /**
@@ -35,8 +41,10 @@ final class CopyLine implements AutoCloseable {
    * @param done bytes moved so far
    * @param total bytes to move; 0 or less while not known yet (e.g. data from a pipe: known
    *     once it has been read completely), and no field is shown until it is
+   * @param clock nanoseconds (System::nanoTime; tests pass their own)
    */
-  CopyLine(PrintStream out, String text, boolean live, LongSupplier done, LongSupplier total, Duration delay) {
+  CopyLine(PrintStream out, String text, boolean live, LongSupplier done, LongSupplier total, Duration delay,
+      LongSupplier clock) {
     this.out = out;
     out.print(text);
     out.flush();
@@ -45,24 +53,35 @@ final class CopyLine implements AutoCloseable {
       ticker = null;
       return;
     }
+    long start = clock.getAsLong();
     ticker = Thread.ofPlatform().daemon().name("m65-progress").start(() -> {
       try {
         Thread.sleep(delay);
-        int last = -1;
+        String last = null;
+        ArrayDeque<long[]> samples = new ArrayDeque<>(); // {time, done}
         while (!Thread.currentThread().isInterrupted()) {
-          // never 100 % before the copy is done (read-ahead can move a little more than the file)
+          long now = clock.getAsLong();
+          long d = Math.max(0, done.getAsLong());
           long t = total.getAsLong();
-          int pct = t <= 0 ? -1 : (int) Math.min(99, Math.max(0, done.getAsLong()) * 100 / t);
-          if (pct >= 0 && pct != last) {
-            synchronized (out) {
-              if (ended) {
-                return;
+          samples.addLast(new long[] {now, d});
+          while (samples.size() > 2 && now - samples.peekFirst()[0] > RATE_WINDOW.toNanos()) {
+            samples.removeFirst();
+          }
+          if (t > 0) {
+            // never 100 % before the copy is done (read-ahead can move a little more than the file)
+            int pct = (int) Math.min(99, d * 100 / t);
+            String eta = now - start >= ETA_AFTER.toNanos() && pct >= 1 ? eta(samples, t - d) : null;
+            String field = String.format(FIELD, pct) + (eta == null ? "" : " (" + eta + ")");
+            if (!field.equals(last)) {
+              synchronized (out) {
+                if (ended) {
+                  return;
+                }
+                draw(field);
+                lastPct = pct;
               }
-              out.print((shown ? "\b".repeat(WIDTH) : "") + String.format(FIELD, pct));
-              out.flush();
-              shown = true;
+              last = field;
             }
-            last = pct;
           }
           Thread.sleep(INTERVAL);
         }
@@ -70,6 +89,10 @@ final class CopyLine implements AutoCloseable {
         // done
       }
     });
+  }
+
+  CopyLine(PrintStream out, String text, boolean live, LongSupplier done, LongSupplier total, Duration delay) {
+    this(out, text, live, done, total, delay, System::nanoTime);
   }
 
   CopyLine(PrintStream out, String text, boolean live, LongSupplier done, long total, Duration delay) {
@@ -82,6 +105,40 @@ final class CopyLine implements AutoCloseable {
 
   CopyLine(PrintStream out, String text, boolean live, LongSupplier done, long total) {
     this(out, text, live, done, () -> total, DELAY);
+  }
+
+  /** The time left at the rate over the samples, or null if there is no rate yet. */
+  private static String eta(ArrayDeque<long[]> samples, long left) {
+    long[] first = samples.peekFirst();
+    long[] last = samples.peekLast();
+    long dt = last[0] - first[0];
+    long moved = last[1] - first[1];
+    if (dt < Duration.ofSeconds(1).toNanos() || moved <= 0) {
+      return null;
+    }
+    return duration((long) Math.ceil(left * (double) dt / moved / 1e9));
+  }
+
+  /** "<1 min", "8 min", "1 h 05 min" (minutes, rounded up: seconds would only flicker). */
+  static String duration(long seconds) {
+    if (seconds < 60) {
+      return "<1 min";
+    }
+    long minutes = (seconds + 59) / 60;
+    return minutes < 60 ? minutes + " min" : String.format("%d h %02d min", minutes / 60, minutes % 60);
+  }
+
+  /** Replaces the field on screen with {@code field} (wider or narrower). Call with out locked. */
+  private void draw(String field) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("\b".repeat(shown)).append(field);
+    int pad = shown - field.length();
+    if (pad > 0) {
+      sb.append(" ".repeat(pad)).append("\b".repeat(pad)); // the end of a longer old field
+    }
+    out.print(sb);
+    out.flush();
+    shown = field.length();
   }
 
   /**
@@ -136,7 +193,8 @@ final class CopyLine implements AutoCloseable {
 
   /**
    * Ends the line once: with {@code clear} the progress field goes first (a finished line looks
-   * as without progress); without (interrupted) it stays and shows how far it got.
+   * as without progress); without (interrupted) the percentage stays and shows how far it got
+   * (an estimate for a copy that will not finish would only confuse).
    */
   private void end(String suffix, boolean clear) {
     if (ticker != null) {
@@ -147,8 +205,10 @@ final class CopyLine implements AutoCloseable {
         return;
       }
       ended = true;
-      if (shown && clear) {
-        out.print("\b".repeat(WIDTH) + " ".repeat(WIDTH) + "\b".repeat(WIDTH));
+      if (shown > 0 && clear) {
+        out.print("\b".repeat(shown) + " ".repeat(shown) + "\b".repeat(shown));
+      } else if (shown > 0 && lastPct >= 0) {
+        draw(String.format(FIELD, lastPct));
       }
       out.println(suffix);
       out.flush();

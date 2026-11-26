@@ -4,6 +4,14 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- Progress shows the estimated time left: `m65.cp -v`, `m65.boot`, `m65.defrag --fix` and
+  copies from a pipe show `[ 12%] (8 min)` after the first 5 seconds of a transfer, from the
+  rate over the last 10 seconds (minutes, rounded up; `(<1 min)` at the end; `(1 h 05 min)`
+  for long ones). A stalled transfer shows no estimate, an interrupted one keeps only the
+  percentage, and a finished line looks as before.
+
 ## 0.2.2 (2026-11-26)
 
 - Fix: after leaving the transfer helper (RUN/STOP on the MEGA65, or `m65.reset` after a

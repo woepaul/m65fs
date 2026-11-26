@@ -277,7 +277,8 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   a second) and prefer a wired interface over WLAN. `M65_TARGET` skips all of that.
 - **Environment variables:** `M65_TARGET=fe80::…%if` (default: remembered or discovered),
   `M65_IMAGE=card.img` (an SD card image instead of a MEGA65), `M65_PROGRESS=0|1` (progress
-  of large transfers: shown on a terminal by default, never in pipes or logs) and `M65_RESET=1` (reset after
+  of large transfers, `[ 12%] (8 min)` with the time left: shown on a terminal by default,
+  never in pipes or logs) and `M65_RESET=1` (reset after
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
   `m65.boot` or `m65.run`).
 - **Exit status:** 0 ok, 1 error (`m65.defrag`: 1 = fragmented files remain, 2 = error).

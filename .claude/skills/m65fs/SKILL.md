@@ -45,7 +45,7 @@ directory on purpose; run `m65.pwd` first when a relative path matters.
 |---|---|
 | `M65_TARGET=fe80::…%eth0` | Address of the MEGA65 (default: remembered in `~/.cache/m65fs/target` from the last discovery, which prefers wired interfaces) |
 | `M65_IMAGE=card.img` | Work on an SD card image file instead of a MEGA65 (file tools only) |
-| `M65_PROGRESS=0` / `1` | Progress of large transfers (`m65.cp -v`, `m65.boot`, `m65.defrag --fix`): by default shown only on a terminal; `0` never, `1` always |
+| `M65_PROGRESS=0` / `1` | Progress of large transfers (`m65.cp -v`, `m65.boot`, `m65.defrag --fix`), `[ 12%] (8 min)` with the estimated time left after the first 5 s: by default shown only on a terminal; `0` never, `1` always |
 | `M65_RESET=1` | Reset the MEGA65 after each file tool. By default it keeps showing the transfer screen until `m65.reset`, `m65.boot` or `m65.run` |
 | `M65_FORCE=1` | Take the MEGA65 over even if it is busy with another command or reserved for another computer. Only when the user asks for it |
 

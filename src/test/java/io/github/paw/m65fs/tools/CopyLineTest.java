@@ -91,4 +91,71 @@ class CopyLineTest {
     assertEquals("'a' -> 'b'", rendered(all.substring(0, all.length() - System.lineSeparator().length())),
         "the field is cleared before the newline");
   }
+
+  @Test
+  void durationsAreRoundedToMinutes() {
+    assertEquals("<1 min", CopyLine.duration(0));
+    assertEquals("<1 min", CopyLine.duration(59));
+    assertEquals("1 min", CopyLine.duration(60));
+    assertEquals("2 min", CopyLine.duration(61));
+    assertEquals("59 min", CopyLine.duration(59 * 60));
+    assertEquals("1 h 00 min", CopyLine.duration(60 * 60));
+    assertEquals("1 h 05 min", CopyLine.duration(64 * 60 + 1));
+  }
+
+  @Test
+  void aLongCopyShowsTheTimeLeftAfterAWhile() throws InterruptedException {
+    AtomicLong clock = new AtomicLong();
+    AtomicLong done = new AtomicLong();
+    long s = 1_000_000_000L;
+    var l = new CopyLine(out, "'a' -> 'b'", true, done::get, () -> 10_000, Duration.ZERO, clock::get);
+    done.set(150); // bytes first, then the time: the ticker may read in between
+    clock.set(2 * s);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    assertEquals("'a' -> 'b' [  1%]", rendered(bytes.toString()), "no estimate in the first seconds");
+    done.set(600);
+    clock.set(6 * s);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    // 600 bytes in 6 s: 9,400 left at 100/s = 94 s
+    assertEquals("'a' -> 'b' [  6%] (2 min)", rendered(bytes.toString()));
+    done.set(6_000);
+    clock.set(12 * s);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    // the window follows the rate: 5,400 bytes in the last 6 s, 4,000 left
+    assertEquals("'a' -> 'b' [ 60%] (<1 min)", rendered(bytes.toString()));
+    l.close();
+    String all = bytes.toString();
+    assertEquals("'a' -> 'b'", rendered(all.substring(0, all.length() - System.lineSeparator().length())),
+        "the field (with the estimate) is cleared before the newline");
+  }
+
+  @Test
+  void anInterruptedCopyKeepsOnlyItsPercentage() throws InterruptedException {
+    AtomicLong clock = new AtomicLong();
+    AtomicLong done = new AtomicLong();
+    var l = new CopyLine(out, "'a' -> 'b'", true, done::get, () -> 1_000, Duration.ZERO, clock::get);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    done.set(200);
+    clock.set(10_000_000_000L);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    done.set(420);
+    clock.set(20_000_000_000L);
+    Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+    assertTrue(rendered(bytes.toString()).endsWith(" min)"), rendered(bytes.toString()));
+    l.simulateInterrupt();
+    l.close();
+    assertEquals("'a' -> 'b' [ 42%] interrupted", rendered(bytes.toString()));
+  }
+
+  @Test
+  void aStalledCopyShowsNoEstimate() throws InterruptedException {
+    AtomicLong clock = new AtomicLong();
+    AtomicLong done = new AtomicLong(300);
+    try (var l = new CopyLine(out, "'a' -> 'b'", true, done::get, () -> 1_000, Duration.ZERO, clock::get)) {
+      Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+      clock.set(30_000_000_000L); // 30 s without a byte
+      Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+      assertEquals("'a' -> 'b' [ 30%]", rendered(bytes.toString()));
+    }
+  }
 }
