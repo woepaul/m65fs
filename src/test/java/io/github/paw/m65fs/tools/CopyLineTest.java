@@ -130,7 +130,8 @@ class CopyLineTest {
   }
 
   @Test
-  void anInterruptedCopyKeepsOnlyItsPercentage() throws InterruptedException {
+  void anInterruptedCopyKeepsItsFieldAsItIs() throws InterruptedException {
+    // no redraw after Ctrl-C: the terminal's ^C echo would shift the backspaces
     AtomicLong clock = new AtomicLong();
     AtomicLong done = new AtomicLong();
     var l = new CopyLine(out, "'a' -> 'b'", true, done::get, () -> 1_000, Duration.ZERO, clock::get);
@@ -141,10 +142,27 @@ class CopyLineTest {
     done.set(420);
     clock.set(20_000_000_000L);
     Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
-    assertTrue(rendered(bytes.toString()).endsWith(" min)"), rendered(bytes.toString()));
+    String before = bytes.toString();
     l.simulateInterrupt();
     l.close();
-    assertEquals("'a' -> 'b' [ 42%] interrupted", rendered(bytes.toString()));
+    assertEquals(before + " interrupted" + System.lineSeparator(), bytes.toString(), "only the suffix is added");
+    assertTrue(rendered(bytes.toString()).matches("'a' -> 'b' \\[ 42%\\] \\(.* min\\) interrupted"),
+        rendered(bytes.toString()));
+  }
+
+  @Test
+  void theEstimateAppearsAlsoAtZeroPercent() throws InterruptedException {
+    // 2 GiB stay at 0 % for half a minute; the estimate must not wait for 1 %
+    AtomicLong clock = new AtomicLong();
+    AtomicLong done = new AtomicLong();
+    long total = 2L << 30;
+    try (var l = new CopyLine(out, "'a' -> 'b'", true, done::get, () -> total, Duration.ZERO, clock::get)) {
+      Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+      done.set(6L * 950 * 1024); // 6 s at 950 KiB/s
+      clock.set(6_000_000_000L);
+      Thread.sleep(CopyLine.INTERVAL.toMillis() * 2);
+      assertEquals("'a' -> 'b' [  0%] (37 min)", rendered(bytes.toString()));
+    }
   }
 
   @Test

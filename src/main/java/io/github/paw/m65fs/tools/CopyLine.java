@@ -33,7 +33,6 @@ final class CopyLine implements AutoCloseable {
   private volatile String interruptedSuffix = " interrupted";
   private final Runnable onInterrupt = () -> end(interruptedSuffix, false);
   private int shown; // characters of the field on screen; guarded by out
-  private int lastPct = -1; // guarded by out
   private boolean ended; // guarded by out
 
   /**
@@ -70,7 +69,8 @@ final class CopyLine implements AutoCloseable {
           if (t > 0) {
             // never 100 % before the copy is done (read-ahead can move a little more than the file)
             int pct = (int) Math.min(99, d * 100 / t);
-            String eta = now - start >= ETA_AFTER.toNanos() && pct >= 1 ? eta(samples, t - d) : null;
+            // from ETA_AFTER on, also at 0 % (a large file stays there for a long time)
+            String eta = now - start >= ETA_AFTER.toNanos() ? eta(samples, t - d) : null;
             String field = String.format(FIELD, pct) + (eta == null ? "" : " (" + eta + ")");
             if (!field.equals(last)) {
               synchronized (out) {
@@ -78,7 +78,6 @@ final class CopyLine implements AutoCloseable {
                   return;
                 }
                 draw(field);
-                lastPct = pct;
               }
               last = field;
             }
@@ -193,8 +192,9 @@ final class CopyLine implements AutoCloseable {
 
   /**
    * Ends the line once: with {@code clear} the progress field goes first (a finished line looks
-   * as without progress); without (interrupted) the percentage stays and shows how far it got
-   * (an estimate for a copy that will not finish would only confuse).
+   * as without progress); without (interrupted) the field stays as it is and shows how far it
+   * got. It is not redrawn then: on Ctrl-C the terminal has echoed {@code ^C} at the cursor, so
+   * backspaces would land in the wrong column.
    */
   private void end(String suffix, boolean clear) {
     if (ticker != null) {
@@ -207,8 +207,6 @@ final class CopyLine implements AutoCloseable {
       ended = true;
       if (shown > 0 && clear) {
         out.print("\b".repeat(shown) + " ".repeat(shown) + "\b".repeat(shown));
-      } else if (shown > 0 && lastPct >= 0) {
-        draw(String.format(FIELD, lastPct));
       }
       out.println(suffix);
       out.flush();
