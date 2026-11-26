@@ -52,12 +52,7 @@ JAR=$(ls "$HERE"/target/m65fs-*.jar | grep -v -e sources -e javadoc | head -1)
 echo "== native-image ($("$NI" --version | head -1))"
 OUT="$HERE/target/native"
 mkdir -p "$OUT"
-# Windows: the console shows text in its code page (usually 850 or 437), which the JDK detects
-# at run time, but native-image includes only a few charsets, so it fell back to UTF-8 and
-# "SHIFT+£" came out as "SHIFT+┬ú". All charsets cost about 5.8 MB, so only for Windows.
-EXTRA=()
-[[ $PLATFORM == windows-* ]] && EXTRA+=(-H:+AddAllCharsets)
-"$NI" -jar "$JAR" -o "$OUT/m65" -march=compatibility ${EXTRA[@]+"${EXTRA[@]}"} "$@"
+"$NI" -jar "$JAR" -o "$OUT/m65" -march=compatibility "$@"
 
 BIN="$OUT/m65"
 [[ $PLATFORM == windows-* ]] && BIN="$OUT/m65.exe"
@@ -79,9 +74,27 @@ fi
 COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
 while IFS= read -r c; do COMMANDS+=("${c//$'\r'/}"); done < <("$BIN" --list-commands)
 [[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$BIN --list-commands gave no commands" >&2; exit 1; }
+# Windows: no symbolic links, a .cmd wrapper per command. m65 writes UTF-8, the console shows
+# its code page (usually 850 or 437: "SHIFT+£" came out as "SHIFT+┬ú"), so the wrapper switches
+# the console to UTF-8 (65001) for the command and back afterwards, keeping the exit status.
+# (-H:+AddAllCharsets did not help: the native image does not use the console's code page.)
+cmd_wrapper() {
+  printf '%s\r\n' \
+    '@echo off' \
+    'setlocal' \
+    'set "M65CP="' \
+    'for /f "tokens=2 delims=:" %%a in ('"'"'chcp'"'"') do set "M65CP=%%a"' \
+    'if defined M65CP set "M65CP=%M65CP: =%"' \
+    'if defined M65CP set "M65CP=%M65CP:.=%"' \
+    'chcp 65001 >nul' \
+    "\"%~dp0m65.exe\" $1 %*" \
+    'set "M65RC=%ERRORLEVEL%"' \
+    'if defined M65CP chcp %M65CP% >nul' \
+    'exit /b %M65RC%'
+}
 for c in "${COMMANDS[@]}"; do
   if [[ $PLATFORM == windows-* ]]; then
-    printf '@"%%~dp0m65.exe" %s %%*\r\n' "$c" > "$OUT/m65.$c.cmd"   # no symbolic links on Windows
+    cmd_wrapper "$c" > "$OUT/m65.$c.cmd"
   else
     ln -sf m65 "$OUT/m65.$c"
   fi

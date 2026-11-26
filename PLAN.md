@@ -456,7 +456,8 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
   links, or check them, themselves).
   * `m65 install`: creates the `m65.CMD` entries next to the running binary (its own path:
     `/proc/self/exe` or `ProcessHandle`): relative symlinks `m65.ls -> m65` on Linux and
-    macOS, `m65.ls.cmd` wrappers on Windows (as the release archive has them). An existing
+    macOS, `m65.ls.cmd` wrappers on Windows (as the release archive has them, including the
+    switch of the console to UTF-8 and back, see `tools/build-native.sh`). An existing
     file of that name that is not an m65 link or wrapper is left alone (with a warning).
     Entries for commands that no longer exist (e.g. `m65.split`, renamed to `m65.dsplit`) are
     removed. Then, on Linux and macOS, `m65 completion install` (`--no-completion` to skip).

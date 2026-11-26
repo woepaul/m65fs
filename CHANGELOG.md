@@ -6,14 +6,19 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 
 ## Unreleased
 
+- Fix: after leaving the transfer helper (RUN/STOP, or `m65.reset` after a tool), BASIC 65
+  could start with `?FILE NOT FOUND ERROR` or `74,DRIVE NOT READY`. The helper was loaded at
+  $0800, over BASIC's workspace, and BASIC reads some of it unchecked after a reset: the
+  default drive at $1106 then came from a helper code byte (with 0.2.1's helper by chance a
+  harmless one). The helper now lives at $4000 and leaves $0000-$2FFF alone
+  (`HELPER_VERSION` 6).
 - The helper's title row says what RUN/STOP does right now: `run/stop: quit to basic (idle)`,
   `run/stop: no action (busy)`, or after a fatal error `run/stop: reset (error)`. It always
   said `quit to basic (idle)`, also while busy (`HELPER_VERSION` 5).
 - Windows: messages and file names with characters outside ASCII came out garbled in the
-  console (`SHIFT+£` as `SHIFT+┬ú`). The console shows text in its code page (usually 850 or
-  437); the Windows binary now includes all character sets (`-H:+AddAllCharsets`, about
-  5.8 MB more, Windows only), so it can write in that code page instead of falling back to
-  UTF-8.
+  console (`SHIFT+£` as `SHIFT+┬ú`): m65 writes UTF-8, the console shows its code page
+  (usually 850 or 437). The `m65.*.cmd` wrappers now switch the console to UTF-8 for the
+  command and back to its code page afterwards (calling `m65.exe` directly is not covered).
 
 ## 0.2.1 (2026-11-25)
 
