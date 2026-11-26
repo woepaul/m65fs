@@ -31,7 +31,7 @@
 
 !cpu m65
 
-HELPER_VERSION = 4              ; in the hello answer; m65fs only reuses a running helper of
+HELPER_VERSION = 5              ; in the hello answer; m65fs only reuses a running helper of
                                 ; its own version (RemoteSdSession.HELPER_VERSION). Raise both
                                 ; with every change of the helper: otherwise a running older
                                 ; helper of the same number is reused
@@ -372,7 +372,12 @@ op_hello:
         jmp reply
 
 ; a request of the session: not idle, border red, status "busy"
-active: lda #$00
+active: lda idle                ; was idle: the title says RUN/STOP does nothing now
+        cmp #IDLE_SECS
+        bcc +
+        ldx #title_busy - titles
+        jsr show_title
++       lda #$00
         sta idle
         lda #2
         sta $d020
@@ -1435,7 +1440,9 @@ clr_colour:
         sta (ptr),y
         iny
         bra -
-+++     jsr show_stats
++++     ldx #title_busy - titles  ; RUN/STOP works only after IDLE_SECS without a request
+        jsr show_title
+        jsr show_stats
         ldx #msg_waiting - msgs
         ; fall through
 
@@ -1456,6 +1463,8 @@ status:                         ; message X (offset in msgs) in the status row
 +       rts
 
 fatal:  jsr status              ; message X, then stop: the host notices the silence
+        ldx #title_error - titles
+        jsr show_title
         ldx #fatal_end - fatal_text - 1
 -       lda fatal_text,x
         sta SCREEN + ROW_STATUS * COLS + COLS - (fatal_end - fatal_text),x
@@ -1482,10 +1491,26 @@ fatal_end:
 title:  !scr "m65fs transfer helper"
 title_end:
 
+; the right end of the title row: what RUN/STOP does now (X = offset in titles)
+show_title:
+        ldy #0
+-       lda titles,x
+        ora #$80                ; reversed, as the title row
+        sta SCREEN + COLS - 1 - TITLE_LEN,y
+        inx
+        iny
+        cpy #TITLE_LEN
+        bne -
+        rts
+
+titles:                         ; right aligned, all TITLE_LEN long
+title_idle:  !scr "run/stop: quit to basic (idle)"
+title_busy:  !scr "    run/stop: no action (busy)"
+title_error: !scr "       run/stop: reset (error)"
+TITLE_LEN = 30
+
 texts:  +at 0, 1
         !scr $80, "m65fs transfer helper", 0
-        +at 0, COLS - 31
-        !scr $80, "run/stop: quit to basic (idle)", 0
         +at ROW_STATUS, 1
         !scr "status", 0
         +at ROW_STATS, 1
@@ -1601,6 +1626,8 @@ tick:   lda $d7fa
         bcc +
         lda #5                  ; border green: idle
         sta $d020
+        ldx #title_idle - titles
+        jsr show_title
         lda owned
         beq +
         lda #state_idle - state_words

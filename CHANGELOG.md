@@ -4,6 +4,17 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 "VERSION (date)"; the release on GitHub takes its notes from that section
 (`tools/release-notes.sh`).
 
+## Unreleased
+
+- The helper's title row says what RUN/STOP does right now: `run/stop: quit to basic (idle)`,
+  `run/stop: no action (busy)`, or after a fatal error `run/stop: reset (error)`. It always
+  said `quit to basic (idle)`, also while busy (`HELPER_VERSION` 5).
+- Windows: messages and file names with characters outside ASCII came out garbled in the
+  console (`SHIFT+£` as `SHIFT+┬ú`). The console shows text in its code page (usually 850 or
+  437); the Windows binary now includes all character sets (`-H:+AddAllCharsets`, about
+  5.8 MB more, Windows only), so it can write in that code page instead of falling back to
+  UTF-8.
+
 ## 0.2.1 (2026-11-25)
 
 - Fix: after Ctrl-C during a write to the card, the next tool hung for 3 seconds at its first

@@ -127,7 +127,8 @@ restored around it.
 **Border.** Red as soon as a request arrives, green when the helper is idle (no write batch
 open, no request for 5 seconds), blinking red after a fatal error.
 
-**Keyboard.** RUN/STOP or ESC (from the hardware queue `$D610`) quits into MEGA65 mode when
+**Keyboard.** The right end of the title row says what RUN/STOP does right now (quit to
+BASIC when idle, nothing when busy, reset after a fatal error). RUN/STOP or ESC (from the hardware queue `$D610`) quits into MEGA65 mode when
 the helper is idle: no write batch open and no request for 5 seconds; otherwise the status row
 says so. After a fatal error the same keys reset the machine. Before the reset the hot
 registers are switched on again and `$D031` is cleared, so the ROM starts from the power-on
