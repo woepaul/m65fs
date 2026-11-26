@@ -1,5 +1,7 @@
 # Builds the native m65 binary on every release platform and smoke-tests it. Used by ci.yml
-# (just build and test) and release.yml (with a version, packaged and uploaded).
+# (just build and test) and release.yml (with a version, packaged and uploaded). Started by
+# hand with a version (gh workflow run native.yml -f version=0.2.2-test1), it packages the
+# archives as artifacts of the run, without a release: test builds, e.g. for Windows.
 name: Native binaries
 
 on:
@@ -9,6 +11,12 @@ on:
         description: Release version (empty = keep the version in pom.xml, don't package)
         type: string
         default: ""
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for the test build (e.g. 0.2.2-test1); archives become artifacts
+        type: string
+        required: true
 
 permissions:
   contents: read
