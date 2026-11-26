@@ -31,26 +31,32 @@
 
 !cpu m65
 
-HELPER_VERSION = 5              ; in the hello answer; m65fs only reuses a running helper of
+HELPER_VERSION = 6              ; in the hello answer; m65fs only reuses a running helper of
                                 ; its own version (RemoteSdSession.HELPER_VERSION). Raise both
                                 ; with every change of the helper: otherwise a running older
                                 ; helper of the same number is reused
 
 ; ---------------------------------------------------------------- memory
+; Everything stays out of $0000-$2FFF: BASIC 65's screen and workspace ($0800-$1FFF) must be
+; as BASIC left them when the machine is reset into BASIC (RUN/STOP, quit, m65.reset): the ROM
+; reads some of it unchecked after a reset, e.g. the default drive at $1106 (the helper used
+; to be loaded at $0800, and a code byte there made BASIC try to autoboot from device 24).
+; A BASIC program in memory ($2001-) is lost, as before.
+CODE    = $4000                 ; the helper's code, up to RXLEN
 SCREEN  = $3000                 ; 80 x 50 = 4000 bytes
 COLS    = 80
 ROWS    = 50
 CHARSET = $2d800                ; the ROM's lower case character set
-RXLEN   = $1ffe                 ; DMA copy of the RX buffer: 2 length bytes,
-RXBUF   = $2000                 ; then the received frame
-TXBUF   = $2400                 ; reply frame (Ethernet, IPv6, UDP, payload)
-NDBUF   = $2700                 ; neighbor advertisement frame
-VBUF1   = $2800                 ; 512-byte compare buffers
-VBUF2   = $2a00
-NAMEBUF = $2c00                 ; file/directory name for the hypervisor (page aligned)
-FLAGS   = $2d00                 ; per batch slot: sector received
-OWNER   = $2d80                 ; 16: IPv6 address of the computer that owns the helper
-SAVEBUF = $2d90                 ; 24: the session's reply addresses during a busy answer
+RXLEN   = $5ffe                 ; DMA copy of the RX buffer: 2 length bytes,
+RXBUF   = $6000                 ; then the received frame
+TXBUF   = $6400                 ; reply frame (Ethernet, IPv6, UDP, payload)
+NDBUF   = $6700                 ; neighbor advertisement frame
+VBUF1   = $6800                 ; 512-byte compare buffers
+VBUF2   = $6a00
+NAMEBUF = $6c00                 ; file/directory name for the hypervisor (page aligned)
+FLAGS   = $6d00                 ; per batch slot: sector received
+OWNER   = $6d80                 ; 16: IPv6 address of the computer that owns the helper
+SAVEBUF = $6d90                 ; 24: the session's reply addresses during a busy answer
 CACHE   = $40000                ; batch sectors (128 x 512 bytes)
 ETHBUF  = $ffde800              ; Ethernet buffer: RX when read (length first), TX when written
 SDBUF   = $ffd6e00              ; SD card sector buffer
@@ -153,7 +159,7 @@ COL_RATE   = 30
         jsr dma_copy
 }
 
-* = $0800
+* = CODE
 entry:
         sei
         cld

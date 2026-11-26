@@ -95,10 +95,15 @@ BASIC's handler. If the ROM still points at the hook (an attempt whose hook neve
 handler address saved then (at $2C7F0) is kept instead of saving the hook's own address.
 Works with a disk attached, too.
 
-## Transfer helper (`helper.prg`, 3.7 KB)
+## Transfer helper (`helper.prg`, 4.4 KB)
 
-Loaded to $0800 with LOAD packets and started with START's jump mode (no ROM initialisation,
-so a file command needs no reset). It switches to the MEGA65 I/O personality and 40 MHz, runs
+Loaded to $4000 with LOAD packets and started with START's jump mode (no ROM initialisation,
+so a file command needs no reset). Memory: code $4000-, buffers $5FFE-$6DFF, screen
+$3000-$3FA0, batch cache $40000-$4FFFF. $0000-$2FFF stays untouched: BASIC 65's screen and
+workspace ($0800-$1FFF) have to be as BASIC left them when the machine is reset into BASIC
+(RUN/STOP, quit, `m65.reset`), because the ROM reads some of it unchecked after a reset (the
+default drive at $1106: with the helper at $0800 a code byte there made BASIC try to autoboot
+from device 24 and print `?FILE NOT FOUND ERROR` or `74,DRIVE NOT READY`). It switches to the MEGA65 I/O personality and 40 MHz, runs
 with interrupts off and uses nothing from the ROM except its lower case character set
 ($2D800). On start it returns to the working directory the trigger saved (`$4C`).
 
