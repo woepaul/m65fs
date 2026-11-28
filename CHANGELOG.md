@@ -9,8 +9,9 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 - `m65 install [DIR]` sets everything up from the unpacked release (or a build): copies `m65`
   to `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands
   (links; on Windows the launchers, which the Windows binary carries), installs bash completion
-  and says how to put the directory on the `PATH` if it isn't. `m65 uninstall` removes exactly
-  that; `m65 completion install|uninstall` does the completion alone. `tools/install.sh` now
+  and says how to put the directory on the `PATH` if it isn't. The Windows zip therefore only
+  holds `bin\m65.exe`. `m65 uninstall` removes exactly that (on Windows also the running
+  `m65.exe`, a moment after it has ended); `m65 completion install|uninstall` does the completion alone. `tools/install.sh` now
   builds and runs `m65 install`.
 - `m65.cat -p` / `-P`: shows PETSCII text files (as the MEGA65's `TYPE` shows them, e.g.
   `TYPEME`) as readable text, in either character set: `-p` (`--petscii=lower`) the lower/upper

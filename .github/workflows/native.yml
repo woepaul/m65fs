@@ -74,17 +74,14 @@ jobs:
           "$bin" --version
           "$bin" --list-commands
           "$bin" help > /dev/null
-          if [[ -f target/native/m65.ls.exe ]]; then   # the Windows launchers pass on args and status
-            target/native/m65.ls.exe --help | grep -q "usage: m65.ls"
-            if target/native/m65.ls.exe --no-such-option 2>/dev/null; then exit 1; fi
-          fi
           ls target/native
           # m65 install / uninstall into a scratch directory (Windows: the launchers from install.zip)
           d=$(mktemp -d)/inst
           "$bin" install --no-completion "$d"
           ls "$d"
           ls=$d/m65.ls; [[ -f $ls.exe ]] && ls=$ls.exe
-          "$ls" --help | grep -q "usage: m65.ls"
+          "$ls" --help | grep -q "usage: m65.ls"                       # arguments get through
+          if "$ls" --no-such-option 2>/dev/null; then exit 1; fi      # and the exit status
           "$bin" uninstall "$d"
           [[ -z "$(ls -A "$d")" ]]
 

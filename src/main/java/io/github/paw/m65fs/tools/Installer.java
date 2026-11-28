@@ -238,24 +238,30 @@ final class Installer {
         // not a path
       }
     }
+    // the command on a line of its own, without indentation (easy to copy), the explanation after "-----"
     out.println();
-    out.println(dir + " is not on your PATH yet. To add it:");
     if (windows) {
-      out.println("  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', "
+      out.println(dir + " is not on your PATH yet. To add it, run in PowerShell:");
+      out.println();
+      out.println("[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', "
           + "'User') + ';" + dir + "', 'User')");
-      out.println("(in PowerShell; then open a new terminal)");
+      out.println("-----");
+      out.println("This adds it to your user PATH. Then open a new terminal.");
       return;
     }
     String shown = dir.startsWith(home()) ? "$HOME/" + home().relativize(dir) : dir.toString();
     String shell = Path.of(env.getOrDefault("SHELL", "bash")).getFileName().toString();
+    out.println(dir + " is not on your PATH yet. To add it, run:");
+    out.println();
     switch (shell) {
-      case "zsh" -> out.println("  echo 'export PATH=\"" + shown + ":$PATH\"' >> ~/" + (mac ? ".zprofile" : ".zshrc"));
-      case "fish" -> out.println("  fish_add_path " + dir);
-      default -> out.println("  echo 'export PATH=\"" + shown + ":$PATH\"' >> ~/" + (mac ? ".bash_profile" : ".bashrc"));
+      case "zsh" -> out.println("echo 'export PATH=\"" + shown + ":$PATH\"' >> ~/" + (mac ? ".zprofile" : ".zshrc"));
+      case "fish" -> out.println("fish_add_path " + dir);
+      default -> out.println("echo 'export PATH=\"" + shown + ":$PATH\"' >> ~/" + (mac ? ".bash_profile" : ".bashrc"));
     }
-    out.println("then open a new terminal." + (created && !mac && dir.equals(home().resolve(".local/bin"))
-        ? " (Many Linux distributions add ~/.local/bin by themselves once it exists: logging in again may"
-            + " be enough.)" : ""));
+    out.println("-----");
+    out.println("Then open a new terminal." + (created && !mac && dir.equals(home().resolve(".local/bin"))
+        ? " Many Linux distributions add ~/.local/bin by themselves once it exists, so logging in again"
+            + " may be enough." : ""));
   }
 
   // ------------------------------------------------------------------ completion
@@ -378,7 +384,13 @@ final class Installer {
         Files.delete(bin);
         out.println("removed " + bin);
       } catch (IOException e) {
-        // Windows cannot delete a running program
+        if (windows && Files.isSameFile(bin, self)) {
+          // Windows cannot delete a running program: a detached cmd does it once this one has ended
+          new ProcessBuilder("cmd.exe", "/c", "ping -n 3 127.0.0.1 >nul & del /f /q \"" + bin + "\" & rmdir \""
+              + dir + "\" 2>nul").redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+          out.println("removing " + bin + " in a moment (it is the running program)");
+          return 0;
+        }
         err.println("m65: cannot remove " + bin + " (" + e.getMessage() + "): delete it by hand");
         return 1;
       }

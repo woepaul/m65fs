@@ -61,7 +61,7 @@ needed:
 |---|---|---|
 | Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
 | macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
-| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` and `bin\m65.ls.exe`, `bin\m65.cp.exe`, … |
+| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` (`m65 install` creates `m65.ls.exe`, `m65.cp.exe`, …) |
 
 Unpack it and run **`bin/m65 install`** (Windows: `bin\m65.exe install`). It copies `m65` to
 `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands there,

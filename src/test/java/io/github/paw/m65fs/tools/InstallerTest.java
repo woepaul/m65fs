@@ -69,7 +69,9 @@ class InstallerTest {
     assertTrue(Files.readString(completions.resolve("m65")).contains("complete -F _m65_complete m65 m65.ls"));
     assertEquals(Path.of("m65"), Files.readSymbolicLink(completions.resolve("m65.cp")));
     assertTrue(out.toString().contains("is not on your PATH yet"), out.toString());
-    assertTrue(out.toString().contains("echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc"), out.toString());
+    // the command alone on its line, unindented, then "-----" and the explanation
+    assertTrue(out.toString().contains("\n\necho 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc\n-----\nThen open"),
+        out.toString());
 
     Files.writeString(bin().resolve("other-tool"), "not ours");
     assertEquals(0, i.uninstall(bin()));
@@ -153,7 +155,8 @@ class InstallerTest {
     for (String c : M65fs.COMMANDS) {
       assertArrayEquals(launcher, Files.readAllBytes(dir.resolve("m65." + c + ".exe")), c);
     }
-    assertTrue(out.toString().contains("SetEnvironmentVariable('Path'"), out.toString());
+    assertTrue(out.toString().contains("\n\n[Environment]::SetEnvironmentVariable('Path'"), out.toString());
+    assertTrue(out.toString().contains("'User')\n-----\n"), out.toString());
     i.uninstall(dir);
     try (var s = Files.list(dir)) {
       assertEquals(0, s.count());
