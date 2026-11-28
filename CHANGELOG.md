@@ -6,6 +6,15 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 
 ## Unreleased
 
+- Wildcards in card paths: `m65.cp m65:/c128/roms/* .`, `m65.rm /GAMES/*.bak`: `*`, `?` and
+  `[…]` in `ls`, `cp`, `mv`, `rm`, `cat` and `stat`, expanded like bash does for local paths
+  (case-sensitive, sorted; no match: reported as missing).
+- Bash tab completion: `eval "$(m65 completion bash)"` (e.g. in `~/.bashrc`). TAB completes
+  card paths (`m65:/PATH`, and plain paths in the tools that use the card only), local paths
+  where a tool takes them, options and their values. Card paths come only from a transfer
+  helper that is already running and free; completion never takes over the MEGA65.
+- Library: file system option `runningOnly` (use only a running, free transfer helper; no
+  trigger).
 - Progress shows the estimated time left: `m65.cp -v`, `m65.boot`, `m65.defrag --fix` and
   copies from a pipe show `[ 12%] (8 min)` after the first 5 seconds of a transfer (also at
   0 %, which a large file shows for a while), from the rate over the last 10 seconds (rounded

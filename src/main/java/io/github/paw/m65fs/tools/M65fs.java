@@ -4,6 +4,7 @@ import io.github.paw.m65fs.etherload.Etherload;
 import io.github.paw.m65fs.etherload.Etherload.Video;
 import io.github.paw.m65fs.launch.MachineMode;
 import io.github.paw.m65fs.launch.Mega65Launcher;
+import io.github.paw.m65fs.nio.Globs;
 import io.github.paw.m65fs.nio.Mega65FileAttributes;
 import io.github.paw.m65fs.nio.Mega65FileStore;
 import io.github.paw.m65fs.nio.Mega65FileSystem;
@@ -159,6 +160,15 @@ public final class M65fs {
       out.flush();
       return 0;
     }
+    if (a.size() >= 2 && a.get(1).equals("__complete") && COMMANDS.contains(a.getFirst())) {
+      a.removeFirst(); // m65.ls __complete ... (the script calls the command that was typed)
+    }
+    if (!a.isEmpty() && a.getFirst().equals("__complete")) {
+      return complete(a);
+    }
+    if (!a.isEmpty() && a.getFirst().equals("completion")) {
+      return completion(a);
+    }
     if (a.isEmpty() || a.getFirst().equals("help") || a.getFirst().equals("--help")) {
       usage(a.isEmpty() ? err : out);
       return a.isEmpty() ? 1 : 0;
@@ -230,6 +240,7 @@ public final class M65fs {
     Set<Character> f = flags(a, "lRd");
     List<String> paths = a.isEmpty() ? List.of(".") : a;
     try (var fs = openCard(true)) {
+      paths = glob(fs, paths, true);
       List<Path> files = new ArrayList<>();
       List<Path> dirs = new ArrayList<>();
       for (String s : paths) {
@@ -445,7 +456,7 @@ public final class M65fs {
     try (var fs = needCard ? openCard(!writeCard) : null) {
       Path dst = path(fs, a.getLast());
       boolean dstIsDir = Files.isDirectory(dst);
-      List<String> sources = a.subList(0, a.size() - 1);
+      List<String> sources = glob(fs, a.subList(0, a.size() - 1), false);
       if (sources.size() > 1 && !dstIsDir) {
         throw new Failure("target '" + a.getLast() + "' is not a directory");
       }
@@ -722,7 +733,7 @@ public final class M65fs {
     try (var fs = openCard(false)) {
       Path dst = fs.getPath(cardPath(a.getLast()));
       boolean dstIsDir = Files.isDirectory(dst);
-      List<String> sources = a.subList(0, a.size() - 1);
+      List<String> sources = glob(fs, a.subList(0, a.size() - 1), true);
       if (sources.size() > 1 && !dstIsDir) {
         throw new Failure("target '" + a.getLast() + "' is not a directory");
       }
@@ -911,7 +922,7 @@ public final class M65fs {
       throw new Failure("missing operand");
     }
     try (var fs = openCard(false)) {
-      for (String s : a) {
+      for (String s : glob(fs, a, true)) {
         Path p = fs.getPath(cardPath(s));
         if (p.toAbsolutePath().normalize().getNameCount() == 0) {
           warn("it is dangerous to operate recursively on '/'; refusing");
@@ -982,7 +993,7 @@ public final class M65fs {
       throw new Failure("missing operand");
     }
     try (var fs = openCard(true)) {
-      for (String s : a) {
+      for (String s : glob(fs, a, true)) {
         Path p = fs.getPath(cardPath(s));
         if (Files.isDirectory(p)) {
           warn(s + ": Is a directory");
@@ -1003,7 +1014,7 @@ public final class M65fs {
       throw new Failure("missing operand");
     }
     try (var fs = openCard(true)) {
-      for (String s : a) {
+      for (String s : glob(fs, a, true)) {
         Path p0 = fs.getPath(cardPath(s));
         if (!Files.exists(p0)) {
           warn("cannot stat '" + s + "': No such file or directory");
@@ -1175,6 +1186,165 @@ public final class M65fs {
     noOperands(a);
     out.println(discoverAndRemember());
     return 0;
+  }
+
+  // ------------------------------------------------------------------ completion
+
+  /**
+   * {@code __complete LINE [WORDBREAKS [on|off]]} (hidden, called by the completion script): prints the
+   * completions of LINE's last word, see {@link Completion}. Never fails: no answer is "none".
+   */
+  private int complete(List<String> a) {
+    String line = a.size() > 1 ? a.get(1) : "";
+    String breaks = a.size() > 2 ? a.get(2) : Completion.WORDBREAKS;
+    boolean ignoreCase = a.size() > 3 && a.get(3).equals("on");
+    Completion.Answer answer;
+    try {
+      answer = new Completion(this::listQuietly, breaks, ignoreCase).complete(line);
+    } catch (RuntimeException e) {
+      answer = Completion.Answer.NONE;
+    }
+    out.print(answer.text());
+    out.flush();
+    return 0;
+  }
+
+  /** {@code completion bash}: prints the bash completion script. */
+  private int completion(List<String> a) {
+    if (a.equals(List.of("completion", "bash"))) {
+      out.print(Completion.bashScript(version()));
+      out.flush();
+      return 0;
+    }
+    err.println("usage: m65 completion bash      (load it with: eval \"$(m65 completion bash)\")");
+    return 1;
+  }
+
+  /**
+   * A card directory for completion, without disturbing anything: only an image (M65_IMAGE) or
+   * a transfer helper that is already running and free, at M65_TARGET or the remembered
+   * address; no discovery, no trigger, and nothing on the MEGA65's screen.
+   */
+  private List<Completion.Entry> listQuietly(String dir) throws IOException {
+    Map<String, Object> e = new HashMap<>();
+    e.put("readOnly", true);
+    e.put("quitOnClose", false);
+    Mega65FileSystem fs;
+    String image = env.get("M65_IMAGE");
+    if (image != null && !image.isBlank()) {
+      fs = Mega65FileSystem.openImage(Path.of(image), e);
+    } else {
+      String t = env.get("M65_TARGET");
+      if (t == null || t.isBlank()) {
+        Path cache = targetCache();
+        t = cache == null ? "" : Files.readString(cache).strip();
+      }
+      if (t.isEmpty()) {
+        throw new IOException("no known MEGA65 address");
+      }
+      e.put("target", t);
+      e.put("runningOnly", true);
+      fs = (Mega65FileSystem) FileSystems.newFileSystem(URI.create("mega65://auto/"), e);
+    }
+    try (fs; Stream<Path> s = Files.list(fs.getPath(dir.isEmpty() ? "." : dir))) {
+      List<Completion.Entry> entries = new ArrayList<>();
+      for (Path p : s.toList()) {
+        entries.add(new Completion.Entry(p.getFileName().toString(), Files.isDirectory(p)));
+      }
+      return entries;
+    }
+  }
+
+  // ------------------------------------------------------------------ wildcards
+
+  /**
+   * The operands with wildcards in card paths expanded, as bash does for local paths (which it
+   * cannot do for card paths): {@code *}, {@code ?} and {@code [...]} in any path component,
+   * case-sensitive, sorted; an operand that matches nothing stays as it is (the tool then reports
+   * it as missing). {@code plainIsCard}: plain operands are card paths too (card-only tools).
+   */
+  static List<String> glob(Mega65FileSystem fs, List<String> operands, boolean plainIsCard) throws IOException {
+    List<String> out = new ArrayList<>();
+    for (String s : operands) {
+      if (fs == null || !(isCard(s) || plainIsCard) || !hasWildcard(s)) {
+        out.add(s);
+        continue;
+      }
+      String pre = isCard(s) ? CARD_PREFIX : "";
+      List<String> found = globCard(fs, cardPath(s));
+      if (found.isEmpty()) {
+        out.add(s);
+      } else {
+        found.forEach(f -> out.add(pre + f));
+      }
+    }
+    return out;
+  }
+
+  static boolean hasWildcard(String s) {
+    return s.indexOf('*') >= 0 || s.indexOf('?') >= 0 || s.indexOf('[') >= 0;
+  }
+
+  /** The card paths that {@code pattern} matches (relative ones relative to the working directory). */
+  static List<String> globCard(Mega65FileSystem fs, String pattern) throws IOException {
+    boolean dirOnly = pattern.endsWith("/");
+    List<String> found = List.of(pattern.startsWith("/") ? "/" : "");
+    String[] parts = pattern.split("/");
+    for (int i = 0; i < parts.length; i++) {
+      String part = parts[i];
+      if (part.isEmpty()) {
+        continue;
+      }
+      boolean last = i == parts.length - 1;
+      List<String> next = new ArrayList<>();
+      for (String base : found) {
+        if (!hasWildcard(part)) {
+          next.add(join(base, part));
+          continue;
+        }
+        Path dir = fs.getPath(base.isEmpty() ? "." : base);
+        if (!Files.isDirectory(dir)) {
+          continue;
+        }
+        java.util.regex.Pattern re = globRegex(part);
+        if (re == null) {
+          next.add(join(base, part)); // broken pattern: a literal name
+          continue;
+        }
+        List<String> names;
+        try (Stream<Path> l = Files.list(dir)) {
+          names = l.filter(p -> !last || !dirOnly || Files.isDirectory(p)).filter(p -> last || Files.isDirectory(p))
+              .map(p -> p.getFileName().toString())
+              .filter(n -> !n.equals(".") && !n.equals("..") && re.matcher(n).matches()).sorted(NAME_ORDER).toList();
+        }
+        names.forEach(n -> next.add(join(base, n)));
+      }
+      found = next;
+    }
+    List<String> out = new ArrayList<>();
+    for (String f : found) {
+      if (!f.isEmpty() && !f.equals("/") && Files.exists(fs.getPath(f))) {
+        out.add(dirOnly ? f + "/" : f);
+      }
+    }
+    return out;
+  }
+
+  /** As ls sorts: by name regardless of case, then by case. */
+  private static final Comparator<String> NAME_ORDER =
+      Comparator.comparing((String n) -> n.toLowerCase(Locale.ROOT)).thenComparing(Comparator.naturalOrder());
+
+  private static String join(String base, String name) {
+    return base.isEmpty() ? name : base.endsWith("/") ? base + name : base + "/" + name;
+  }
+
+  /** A shell wildcard for one name ({@code * ? [abc] [!a-z] [^a-z]}), case-sensitive; null if broken. */
+  static java.util.regex.Pattern globRegex(String glob) {
+    try {
+      return java.util.regex.Pattern.compile(Globs.toRegex(glob, true), java.util.regex.Pattern.DOTALL);
+    } catch (java.util.regex.PatternSyntaxException e) {
+      return null; // e.g. "[abc": taken literally, as bash does
+    }
   }
 
   // ------------------------------------------------------------------ helpers
@@ -1435,7 +1605,8 @@ public final class M65fs {
         core utilities. Each tool is m65.COMMAND (or: m65 COMMAND).
 
         files (card paths: m65:/PATH, or m65:PATH relative to the working directory; tools
-        that only use the card also take plain /PATH and PATH)
+        that only use the card also take plain /PATH and PATH; wildcards * ? [...] work in
+        card paths: m65.cp m65:/roms/* .)
           m65.ls [-lRd] [PATH...]             list; -l sizes/times/[fragmented], -R recursive
           m65.tree [-d] [-L LEVEL] [DIR]      tree view with sizes, dates, directory totals;
                                               -d directories only, -L depth
@@ -1472,6 +1643,11 @@ public final class M65fs {
           m65.mount IMAGE.D81                 attach a D81 from the card root as drive 0
           m65.peek ADDRESS_HEX [COUNT]        hex dump of memory (28-bit addresses)
           m65.discover                        print the MEGA65's address
+
+        shell
+          m65 completion bash                 bash tab completion, also for card paths (from
+                                              a running transfer helper only); load it with
+                                              eval "$(m65 completion bash)"
 
         environment
           M65_TARGET=fe80::...%eth0           MEGA65 address (default: found automatically

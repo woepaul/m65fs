@@ -60,6 +60,8 @@ import java.util.regex.Pattern;
 public final class Mega65FileSystem extends FileSystem {
 
   private static final Logger LOG = System.getLogger(Mega65FileSystem.class.getName());
+  /** How long {@code runningOnly} waits for a running helper's answer. */
+  static final java.time.Duration RUNNING_TIMEOUT = java.time.Duration.ofMillis(150);
   static final Set<String> VIEWS = Set.of("basic", "dos", "mega65");
 
   private final Mega65FileSystemProvider provider;
@@ -105,6 +107,13 @@ public final class Mega65FileSystem extends FileSystem {
     options = env.duration("timeout").map(options::withTimeout).orElse(options);
     options = env.integer("writeWindow").map(options::withWriteWindow).orElse(options);
     options = options.withForce(env.bool("force", false));
+    if (env.bool("runningOnly", false)) {
+      // only a transfer helper that is already running and free: no trigger, the MEGA65 is left as it is
+      var running = RemoteSdSession.attachRunning(target, options.withForce(false),
+          env.duration("runningTimeout").orElse(RUNNING_TIMEOUT));
+      return attach(provider, key, authority, running.orElseThrow(() -> new IOException(
+          "no free transfer helper is running on " + target)), env);
+    }
     return attach(provider, key, authority, RemoteSdSession.connect(target, options), env);
   }
 

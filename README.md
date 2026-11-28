@@ -147,6 +147,8 @@ the helper, opening a file system throws `Mega65BusyException` instead of trigge
 | `readAhead` | 16 | Sectors read ahead on cache misses |
 | `quitOnClose` | `true` | Send quit on close. The MEGA65 then resets and leaves the helper. With `false` the session ends with release instead: the helper keeps running, and the next session uses it without a trigger and upload (about 0.1 s instead of 0.5 s). |
 | `readOnly` | `false` | Reject all changes |
+| `runningOnly` | `false` | Use only a transfer helper that is already running and free (no trigger, the MEGA65 is left alone); otherwise opening fails. For quick lookups such as tab completion |
+| `runningTimeout` | 150 ms | Time `runningOnly` waits for the running helper's answer |
 | `zone` | system | Time zone for FAT timestamps, which are stored as local times |
 | `imageFile` | — | Use a local image instead of the network |
 | `shadowMemoryLimit` | 8 MiB | Write buffer per open channel kept in memory before spilling to a temp file |
@@ -267,6 +269,11 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   overwriting by default (`-n` keeps existing files) and `-p` to keep times. A failed
   overwrite on the card leaves the old file intact (no contiguous space, for example).
 - **`m65.mv`** works on the card only.
+- **Wildcards in card paths:** `m65.cp m65:/c128/roms/* .`, `m65.rm /GAMES/*.bak`,
+  `m65.ls -d m65:/c64/[a-f]*`: `*`, `?` and `[…]` work in card paths in `ls`, `cp`, `mv`, `rm`,
+  `cat` and `stat`, as bash expands them for local paths (case-sensitive, sorted; a pattern that
+  matches nothing is reported as missing). Bash leaves `m65:/…` alone, but would expand a
+  plain `/x/*` itself if it happens to match local files: write `m65:/x/*` or quote it to be sure.
 - **`m65.cd`** / **`m65.pwd`**: the MEGA65 keeps the working directory, so it holds from one
   tool to the next and BASIC sees it too (`DIR U12`), and a `CHDIR` in BASIC is where
   relative card paths start. This needs MEGA65 core
@@ -282,6 +289,14 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
   `m65.boot` or `m65.run`).
 - **Exit status:** 0 ok, 1 error (`m65.defrag`: 1 = fragmented files remain, 2 = error).
+- **Tab completion (bash):** `eval "$(m65 completion bash)"`, e.g. in `~/.bashrc`. TAB then
+  completes card paths like local ones: `m65:/PATH` in every tool, plain paths in the tools
+  that use the card only (`m65.ls`, `m65.cd`, `m65.rm`, …). Where a tool reads a plain path as
+  a local one (`m65.cp`, `m65.boot`, `m65.run`), plain paths complete locally. Options and
+  their values complete too. Card paths come only from a transfer helper that is already
+  running and free (after any file tool): completion never takes over the MEGA65, and offers
+  nothing for the card otherwise. Case-sensitive, like local files (unless readline's
+  `completion-ignore-case` is on). A TAB takes about 50 ms, plus about 20 ms per directory level.
 
 **Without installing:** `bin/m65.ls` and so on run the native binary if it's built and up to
 date, and otherwise the jar on the JVM (Java 25+). `java -jar target/m65fs-*.jar ls -l /`

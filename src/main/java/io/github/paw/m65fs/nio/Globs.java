@@ -2,12 +2,25 @@ package io.github.paw.m65fs.nio;
 
 import java.util.regex.PatternSyntaxException;
 
-/** Converts {@code glob:} patterns (as documented in {@link java.nio.file.FileSystem#getPathMatcher}) to regex. */
-final class Globs {
+/**
+ * Converts {@code glob:} patterns (as documented in {@link java.nio.file.FileSystem#getPathMatcher})
+ * to regular expressions. Also used by the m65 tools for wildcards in card paths.
+ */
+public final class Globs {
 
   private Globs() {}
 
-  static String toRegex(String glob) {
+  /** As documented for {@code getPathMatcher}: {@code [!a-z]} negates, {@code ^} is literal. */
+  public static String toRegex(String glob) {
+    return toRegex(glob, false);
+  }
+
+  /**
+   * {@code shell}: also {@code [^a-z]} negates, as in bash.
+   *
+   * @throws java.util.regex.PatternSyntaxException for a broken pattern ({@code [abc})
+   */
+  public static String toRegex(String glob, boolean shell) {
     StringBuilder re = new StringBuilder("^");
     boolean inGroup = false;
     for (int i = 0; i < glob.length(); i++) {
@@ -22,7 +35,7 @@ final class Globs {
           }
         }
         case '?' -> re.append("[^/]");
-        case '[' -> i = bracket(glob, i, re);
+        case '[' -> i = bracket(glob, i, re, shell);
         case '{' -> {
           if (inGroup) {
             throw new PatternSyntaxException("nested groups not supported", glob, i);
@@ -51,10 +64,10 @@ final class Globs {
   }
 
   /** Translates {@code [...]} starting at {@code start}; returns the index of the closing bracket. */
-  private static int bracket(String glob, int start, StringBuilder re) {
+  private static int bracket(String glob, int start, StringBuilder re, boolean shell) {
     int i = start + 1;
     re.append("(?=[^/])["); // a bracket expression never matches the separator
-    if (i < glob.length() && glob.charAt(i) == '!') {
+    if (i < glob.length() && (glob.charAt(i) == '!' || shell && glob.charAt(i) == '^')) {
       re.append('^');
       i++;
     }

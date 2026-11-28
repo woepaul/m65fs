@@ -105,6 +105,37 @@ class M65fsCliTest {
   }
 
   @Test
+  void wildcardsInCardPaths() throws IOException {
+    Path local = Files.createDirectories(tmp.resolve("roms"));
+    for (String n : List.of("a.rom", "B.ROM", "c.bin", "a2.rom")) {
+      Files.write(local.resolve(n), n.getBytes());
+    }
+    assertEquals(0, m65("mkdir", "-p", "/roms/sub"));
+    assertEquals(0, m65("cp", local + "/a.rom", local + "/B.ROM", local + "/c.bin", local + "/a2.rom", "m65:/roms/"));
+
+    assertEquals(0, m65("ls", "/roms/*.rom"));                     // case-sensitive
+    assertEquals("/roms/a.rom\n/roms/a2.rom\n", out());
+    assertEquals(0, m65("ls", "-d", "m65:/r?ms/[aB]*"));
+    assertEquals("/roms/a.rom\n/roms/a2.rom\n/roms/B.ROM\n", out());
+    assertEquals(0, m65("ls", "-d", "m65:/roms/[^aB]*"));          // bash's negation, as [!aB]*
+    assertEquals("/roms/c.bin\n/roms/sub\n", out());
+    assertEquals(0, m65("ls", "-d", "/roms/*/"));                  // directories only
+    assertEquals("/roms/sub\n", out());
+
+    Path back = Files.createDirectories(tmp.resolve("back"));
+    assertEquals(1, m65("cp", "m65:/roms/*", back.toString()));   // the directory is skipped (no -r), as cp does
+    assertEquals(List.of("B.ROM", "a.rom", "a2.rom", "c.bin"), tree(back).stream().filter(n -> !n.isEmpty() && !n.equals("/")).toList());
+    assertTrue(err.toString().contains("sub"), err.toString());
+
+    assertEquals(0, m65("rm", "/roms/a*"));
+    assertEquals(0, m65("ls", "/roms"));
+    assertEquals("B.ROM\nc.bin\nsub\n", out());
+
+    assertEquals(1, m65("ls", "/roms/*.xyz"));                     // no match: as typed, then missing
+    assertTrue(err.toString().contains("'/roms/*.xyz': No such file"), err.toString());
+  }
+
+  @Test
   void cpOverwritesByDefaultKeepsWithNAndHandlesSeveralSources() throws IOException {
     Path a = tmp.resolve("a.prg");
     Path b = tmp.resolve("b.prg");
