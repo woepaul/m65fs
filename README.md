@@ -269,6 +269,11 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   overwriting by default (`-n` keeps existing files) and `-p` to keep times. A failed
   overwrite on the card leaves the old file intact (no contiguous space, for example).
 - **`m65.mv`** works on the card only.
+- **`m65.cat -p`** shows PETSCII text files, the ones the MEGA65's `TYPE` shows (e.g. `TYPEME`),
+  as readable text in the lower/upper case set; **`-P`** uses the upper case/graphics set (the
+  power-on default, for PETSCII art and listings). The case of the letter is the case of the
+  set; the long forms are `--petscii=lower` and `--petscii=upper`. Without them `m65.cat` prints
+  the bytes as stored.
 - **Wildcards in card paths:** `m65.cp m65:/c128/roms/* .`, `m65.rm /GAMES/*.bak`,
   `m65.ls -d m65:/c64/[a-f]*`: `*`, `?` and `[…]` work in card paths in `ls`, `cp`, `mv`, `rm`,
   `cat` and `stat`, as bash expands them for local paths (case-sensitive, sorted; a pattern that

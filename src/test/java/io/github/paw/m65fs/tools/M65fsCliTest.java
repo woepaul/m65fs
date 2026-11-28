@@ -105,6 +105,23 @@ class M65fsCliTest {
   }
 
   @Test
+  void catPetscii() throws IOException {
+    Path f = tmp.resolve("TYPEME");
+    Files.write(f, new byte[] {(byte) 0xd4, 'H', 'I', 'S', ' ', 'F', 'I', 'L', 'E', 0x0d, 0x5c, '1', 0x0d});
+    assertEquals(0, m65("cp", f.toString(), "m65:/TYPEME"));
+    assertEquals(0, m65("cat", "--petscii=lower", "/TYPEME"));
+    assertEquals("This file\n£1\n", out());
+    assertEquals(0, m65("cat", "-p", "m65:/TYPEME"));
+    assertEquals("This file\n£1\n", out());
+    assertEquals(0, m65("cat", "-P", "m65:/TYPEME"));              // upper case/graphics: $D4 is a graphic
+    assertEquals("\uD83E\uDF70HIS FILE\n£1\n", out());
+    assertEquals(1, m65("cat", "--petscii", "/TYPEME"));           // the long form names the set
+    assertEquals(1, m65("cat", "-pP", "/TYPEME"));
+    assertEquals(0, m65("cat", "/TYPEME"));                        // without: the bytes as stored
+    assertEquals(13, out.size());
+  }
+
+  @Test
   void wildcardsInCardPaths() throws IOException {
     Path local = Files.createDirectories(tmp.resolve("roms"));
     for (String n : List.of("a.rom", "B.ROM", "c.bin", "a2.rom")) {

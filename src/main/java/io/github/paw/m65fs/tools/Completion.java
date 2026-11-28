@@ -159,15 +159,22 @@ final class Completion {
   static List<String> options(String tool) {
     Set<String> o = new LinkedHashSet<>();
     String usage = M65fs.usageOf(tool).replaceFirst("\\s{2,}\\(.*", ""); // without the remark
-    Matcher m = Pattern.compile("\\[-([A-Za-z]+)[] ]").matcher(usage);
+    Matcher m = Pattern.compile("\\[-([A-Za-z]+)[] |]").matcher(usage);
     while (m.find()) {
       for (char c : m.group(1).toCharArray()) {
         o.add("-" + c);
       }
     }
-    m = Pattern.compile("--[a-z][a-z-]*").matcher(usage);
+    m = Pattern.compile("--[a-z][a-z-]*(=[a-z|]+)?").matcher(usage);
     while (m.find()) {
-      o.add(m.group());
+      if (m.group(1) == null) {
+        o.add(m.group());
+      } else { // --petscii=lower|upper
+        String name = m.group().substring(0, m.group().indexOf('=') + 1);
+        for (String v : m.group(1).substring(1).split("\\|")) {
+          o.add(name + v);
+        }
+      }
     }
     o.add("--help");
     return List.copyOf(o);
@@ -175,7 +182,8 @@ final class Completion {
 
   /** The candidates that start with {@code cur} (plain words: options, values, commands). */
   private Answer words(List<String> candidates, String cur) {
-    return new Answer("words", candidates.stream().filter(c -> c.startsWith(cur)).toList());
+    int cut = lastBreak(cur) + 1; // bash replaces only the part after "=" in "--petscii=lo"
+    return new Answer("words", candidates.stream().filter(c -> c.startsWith(cur)).map(c -> c.substring(cut)).toList());
   }
 
   /**

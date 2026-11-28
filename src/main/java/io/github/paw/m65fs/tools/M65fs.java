@@ -987,8 +987,37 @@ public final class M65fs {
     }
   }
 
+  /**
+   * cat's PETSCII option: {@code -p} / {@code --petscii=lower} (lower/upper case set),
+   * {@code -P} / {@code --petscii=upper} (upper case/graphics set); null without. The case of
+   * the letter is the case of the set; the long form always names it.
+   */
+  private Petscii.Charset petsciiOption(List<String> a) {
+    Petscii.Charset set = null;
+    for (var it = a.iterator(); it.hasNext(); ) {
+      String s = it.next();
+      if (s.equals("--")) {
+        break;
+      }
+      if (s.startsWith("--petscii")) {
+        set = switch (s) {
+          case "--petscii=lower" -> Petscii.Charset.LOWER;
+          case "--petscii=upper" -> Petscii.Charset.UPPER;
+          default -> throw new Failure("'" + s + "': use --petscii=lower (-p, lower/upper case text) or "
+              + "--petscii=upper (-P, upper case/graphics)");
+        };
+        it.remove();
+      }
+    }
+    Set<Character> f = flags(a, "pP");
+    if (f.contains('p') && f.contains('P')) {
+      throw new Failure("-p and -P exclude each other (lower/upper case or upper case/graphics)");
+    }
+    return f.contains('p') ? Petscii.Charset.LOWER : f.contains('P') ? Petscii.Charset.UPPER : set;
+  }
+
   private int cat(List<String> a) throws IOException {
-    flags(a, "");
+    Petscii.Charset petscii = petsciiOption(a);
     if (a.isEmpty()) {
       throw new Failure("missing operand");
     }
@@ -1000,7 +1029,13 @@ public final class M65fs {
         } else if (!Files.exists(p)) {
           warn(s + ": No such file or directory");
         } else {
-          Files.copy(p, out);
+          if (petscii != null) {
+            try (InputStream in = Files.newInputStream(p)) {
+              Petscii.copy(in, out, petscii);
+            }
+          } else {
+            Files.copy(p, out);
+          }
         }
       }
       out.flush();
@@ -1585,7 +1620,7 @@ public final class M65fs {
       case "rm" -> "m65.rm [-rRfv] PATH...";
       case "mkdir" -> "m65.mkdir [-pv] DIR...";
       case "dsplit" -> "m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...";
-      case "cat" -> "m65.cat FILE...";
+      case "cat" -> "m65.cat [-pP] [--petscii=lower|upper] FILE...";
       case "stat" -> "m65.stat PATH...";
       case "df" -> "m65.df [--contiguous]";
       case "defrag" -> "m65.defrag [--fix] [DIR]";
@@ -1619,7 +1654,9 @@ public final class M65fs {
           m65.mv [-nfv] SOURCE... DEST        move/rename on the card (overwrites unless -n)
           m65.rm [-rRfv] PATH...              delete (-r directories, -f ignore missing)
           m65.mkdir [-pv] DIR...              create directories
-          m65.cat FILE...                     print files
+          m65.cat [-pP] FILE...               print files; PETSCII text (as TYPE shows it)
+                                              as readable text: -p lower/upper case set
+                                              (text files), -P upper case/graphics set
           m65.stat PATH...                    details: 8.3 name, start sector, contiguous
           m65.df [--contiguous]               size and free space (+ largest free run, slow)
           m65.dsplit [-rv] [-m MAX] [--dry-run] DIR...

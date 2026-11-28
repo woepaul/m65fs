@@ -6,6 +6,12 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
 
 ## Unreleased
 
+- `m65.cat -p` / `-P`: shows PETSCII text files (as the MEGA65's `TYPE` shows them, e.g.
+  `TYPEME`) as readable text, in either character set: `-p` (`--petscii=lower`) the lower/upper
+  case set that text files are written for, `-P` (`--petscii=upper`) the upper case/graphics
+  set (power-on default; PETSCII art, listings). Carriage returns become line ends, `£ ↑ ←` and
+  the graphics characters Unicode, colour and cursor codes are dropped. Without either,
+  `m65.cat` prints the bytes as stored.
 - Wildcards in card paths: `m65.cp m65:/c128/roms/* .`, `m65.rm /GAMES/*.bak`: `*`, `?` and
   `[…]` in `ls`, `cp`, `mv`, `rm`, `cat` and `stat`, expanded like bash does for local paths
   (case-sensitive, sorted; no match: reported as missing).

@@ -109,6 +109,8 @@ class CompletionTest {
     assertEquals(List.of("words", "-l", "-R", "-d", "--help"), complete("m65.ls -"));
     assertEquals(List.of("words", "--dry-run"), complete("m65 dsplit --d"));
     assertEquals(List.of("words", "--fix", "--help"), complete("m65.defrag --"));
+    assertEquals(List.of("words", "-p", "-P", "--petscii=lower", "--petscii=upper", "--help"), complete("m65.cat -"));
+    assertEquals(List.of("words", "upper"), complete("m65.cat --petscii=u"));  // bash splits at "="
   }
 
   @Test
