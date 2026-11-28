@@ -429,9 +429,18 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
   paths (silently, no message, no waiting).
 * **Quiet on the MEGA65:** no log lines on the helper's screen for completion sessions
   (`showOnMega65` off), so the log is not flooded by TABs.
-* **Fast enough:** a session with the running helper costs about 40 ms, plus one directory
-  read; a short cache (a few seconds, keyed by directory) in `~/.cache/m65fs/` keeps repeated
-  TABs from asking again.
+* **Fast enough, stateless:** each TAB is one `m65 __complete` process with its own session;
+  no cache, no daemon. Measured 2026-11-28 with `m65.ls` and a running helper (R6, native):
+  `/` 46 ms, `/c64` 72 ms, `/c64/d64` 83 ms, `/c64/d64/RECENTS/2023` 103 ms,
+  `/c64/d64/RECENTS/2023/D64` (93 entries) 128 ms. About 46 ms base (start, session, root),
+  then 20-25 ms per path level (each directory on the way is read to find the next name); the
+  entry count matters little (93 entries: about 25 ms).
+  * **If that turns out too slow** (deep paths, very large directories): not a file cache
+    (stale), but a `__complete` process that stays alive for 5-10 s after the last TAB and
+    answers the following TABs over a local socket (Unix domain socket; Windows 10+ has them
+    too), remembering the directories it has read. Rules: it never triggers or takes over;
+    it lets go of the session at once when a real command from this computer connects (a
+    tool must not wait for it or see "busy"); it ends after the idle time.
 * **Bash details:** `:` is in `COMP_WORDBREAKS`, so `m65:/x` arrives split; handle it like
   bash-completion's `__ltrim_colon_completions` (or `_get_comp_words_by_ref -n :`). Names with
   spaces and special characters must come back escaped; `compopt -o nospace` after a
@@ -468,7 +477,7 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
     archive is built on that platform) can do the same; `--list-commands` stays for the
     archive check and for compatibility.
 * **Resources in the binary, compressed:** everything `m65 install` and `m65 completion` write
-  (the bash script, later zsh and fish, the Windows launcher) lives in one zip
+  (the bash script, later zsh, fish and PowerShell, the Windows launcher) lives in one zip
   resource (e.g. `io/github/paw/m65fs/install.zip`, built from `src/main/install/` at build
   time), read with `ZipInputStream`. native-image stores resources uncompressed, so this keeps
   the cost in the image to the compressed size. Check in the build: the image size before and
@@ -476,7 +485,13 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
   anyway (the JDK pulls it in for other things); if it is not and would cost more than the
   zip saves, store the files plain instead. A test makes sure the zip and its sources match
   (like the helper blob check in CI).
-* **Later:** zsh and fish (the `__complete` subcommand is shell independent).
+* **Maybe later:** zsh and fish (the `__complete` subcommand is shell independent), and PowerShell
+  on Windows: `Register-ArgumentCompleter -Native -CommandName m65.ls,m65.cp,...` with a script
+  block that calls `m65.exe __complete WORD` (Windows PowerShell 5.1 and PowerShell 7;
+  installed by a line in `$PROFILE`, written by `m65 completion install`; script in the same
+  resource zip). To check on Windows: registration under `m65.ls` and/or `m65.ls.exe`, words
+  starting with `m65:`, quoting of names with spaces. `cmd.exe` has no programmable
+  completion (Clink would, but is a niche); Git Bash/MSYS2/WSL use the bash script.
 
 ---
 
