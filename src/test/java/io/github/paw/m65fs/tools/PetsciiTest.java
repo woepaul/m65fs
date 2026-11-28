@@ -52,6 +52,8 @@ class PetsciiTest {
     assertEquals('♠', Petscii.toUnicode(0xc1, Petscii.Charset.UPPER));
     assertEquals('♠', Petscii.toUnicode(0x61, Petscii.Charset.UPPER));
     assertEquals('♥', Petscii.toUnicode(0xd3, Petscii.Charset.UPPER));
+    assertEquals('●', Petscii.toUnicode(0x71, Petscii.Charset.UPPER)); // as large as ○ ($77)
+    assertEquals('○', Petscii.toUnicode(0x77, Petscii.Charset.UPPER));
     assertEquals('π', Petscii.toUnicode(0xde, Petscii.Charset.UPPER));
     assertEquals('π', Petscii.toUnicode(0xff, Petscii.Charset.UPPER));
     assertEquals('╮', Petscii.toUnicode(0xc9, Petscii.Charset.UPPER));
