@@ -59,16 +59,17 @@ needed:
 
 | Platform | Archive | Contents |
 |---|---|---|
-| Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `bin/m65` |
-| macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` |
-| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` (`m65 install` creates `m65.ls.exe`, `m65.cp.exe`, …) |
+| Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `m65` |
+| macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `m65` |
+| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `m65.exe` |
 
-Unpack it and run **`bin/m65 install`** (Windows: `bin\m65.exe install`). It copies `m65` to
+Each holds the binary with README, LICENSE and CHANGELOG. Unpack it and run **`./m65 install`**
+(Windows: `.\m65.exe install`). It copies `m65` to
 `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands there,
 installs bash completion and tells you if that directory still has to go on your `PATH` (with
 the line for your shell). `m65 install DIR` installs elsewhere, `--no-completion` skips the
 completion, and `m65 uninstall` removes exactly what was installed. On macOS the binary isn't
-signed; if it is blocked, `xattr -d com.apple.quarantine bin/m65` allows it. `m65 --version`
+signed; if it is blocked, `xattr -d com.apple.quarantine m65` allows it. `m65 --version`
 shows the version.
 
 **The jar** (`m65fs-VERSION.jar`, on every platform with Java 25): `java -jar m65fs-VERSION.jar

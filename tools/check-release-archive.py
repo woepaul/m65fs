@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Checks a release archive from tools/package-release.sh: every entry name is printable
 ASCII with "/" separators; README.md, LICENSE and CHANGELOG.md are at the top of the
-archive's directory, and the binary (bin/m65, bin/m65.exe) in its bin/; "m65 install"
-creates the commands.
+archive's directory, next to the binary (m65, m65.exe); "m65 install" creates the commands.
 
 Usage: check-release-archive.py ARCHIVE COMMAND...
 """
@@ -19,7 +18,7 @@ if bad:
 # paths below the archive's top directory (m65-VERSION-PLATFORM/)
 files = {n.rstrip("/").split("/", 1)[1] for n in names if "/" in n.rstrip("/")}
 windows = archive.endswith(".zip")
-want = {"README.md", "LICENSE", "CHANGELOG.md", "bin/m65.exe" if windows else "bin/m65"}
+want = {"README.md", "LICENSE", "CHANGELOG.md", "m65.exe" if windows else "m65"}
 # only the binary: "m65 install" creates the m65.CMD commands (links, or launchers on Windows)
 missing = sorted(want - files)
 if missing:

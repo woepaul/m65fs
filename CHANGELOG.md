@@ -10,7 +10,8 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   to `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands
   (links; on Windows the launchers, which the Windows binary carries), installs bash completion
   and says how to put the directory on the `PATH` if it isn't. The release archives therefore
-  only hold the binary (`bin/m65`, `bin\m65.exe`), no links or launchers. `m65 uninstall` removes exactly that (on Windows also the running
+  only hold the binary (`m65`, `m65.exe`, no `bin` directory, links or launchers): unpack, then
+  `./m65 install`. `m65 uninstall` removes exactly that (on Windows also the running
   `m65.exe`, a moment after it has ended); `m65 completion install|uninstall` does the completion alone. `tools/install.sh` now
   builds and runs `m65 install`.
 - `m65.cat -p` / `-P`: shows PETSCII text files (as the MEGA65's `TYPE` shows them, e.g.
