@@ -63,7 +63,8 @@ needed:
 | macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `m65` |
 | Windows amd64 | `m65-VERSION-windows-amd64.zip` | `m65.exe` |
 
-Each holds the binary with README, LICENSE and CHANGELOG. Unpack it and run **`./m65 install`**
+Each holds the binary with a short `INSTALL.txt`, README, LICENSE and CHANGELOG. Unpack it and
+run **`./m65 install`**
 (Windows: `.\m65.exe install`). It copies `m65` to
 `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands there,
 installs bash completion and tells you if that directory still has to go on your `PATH` (with

@@ -4,7 +4,8 @@
 #   target/dist/m65-VERSION-linux-aarch64.tar.gz
 #   target/dist/m65-VERSION-macos-aarch64.tar.gz
 #   target/dist/m65-VERSION-windows-amd64.zip       m65.exe (m65 install creates the commands)
-# each in a directory m65-VERSION-PLATFORM/ with the binary, README.md, LICENSE and CHANGELOG.md.
+# each in a directory m65-VERSION-PLATFORM/ with the binary, INSTALL.txt, README.md, LICENSE and
+# CHANGELOG.md.
 #
 # Usage: tools/package-release.sh VERSION   (prints the archive's path)
 set -euo pipefail
@@ -26,6 +27,60 @@ STAGE="$DIST/$NAME"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp "$HERE/README.md" "$HERE/LICENSE" "$HERE/CHANGELOG.md" "$STAGE/"
+
+# INSTALL.txt: the few steps for this platform (Windows: CRLF, for Notepad)
+install_txt() {
+  case $P in
+    windows-*) cat <<EOF
+m65 $V for Windows: the MEGA65's SD card and machine over Ethernet
+
+Install: open PowerShell in this folder and run
+
+.\m65.exe install
+
+-----
+This copies m65.exe to %LOCALAPPDATA%\Programs\m65 and creates the commands
+there (m65.ls.exe, m65.cp.exe, ...). If that folder is not on your PATH yet,
+it prints the one line that adds it; run that, then open a new terminal.
+Then try:  m65.ls
+
+Elsewhere:   .\m65.exe install C:\some\folder
+Uninstall:   m65 uninstall
+More:        m65 help, and README.md
+EOF
+      ;;
+    *) cat <<EOF
+m65 $V: the MEGA65's SD card and machine over Ethernet
+
+Install: in this directory run
+
+./m65 install
+
+-----
+This copies m65 to ~/.local/bin, creates the commands there (m65.ls, m65.cp,
+...) and installs bash tab completion. If ~/.local/bin is not on your PATH
+yet, it prints the one line that adds it; run that, then open a new terminal.
+Then try:  m65.ls
+EOF
+      [[ $P == macos-* ]] && cat <<'EOF'
+
+macOS: the binary isn't signed. If it is blocked, allow it with
+xattr -d com.apple.quarantine m65
+EOF
+      cat <<'EOF'
+
+Elsewhere:   ./m65 install DIR      (--no-completion: without tab completion)
+Uninstall:   m65 uninstall
+More:        m65 help, and README.md
+EOF
+      ;;
+  esac
+}
+if [[ $P == windows-* ]]; then
+  install_txt | sed 's/$/\r/' > "$STAGE/INSTALL.txt"
+else
+  install_txt > "$STAGE/INSTALL.txt"
+fi
 
 if [[ $P == windows-* ]]; then
   cp "$HERE/target/native/m65.exe" "$STAGE/"   # the commands: m65.exe install

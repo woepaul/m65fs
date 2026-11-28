@@ -18,7 +18,7 @@ if bad:
 # paths below the archive's top directory (m65-VERSION-PLATFORM/)
 files = {n.rstrip("/").split("/", 1)[1] for n in names if "/" in n.rstrip("/")}
 windows = archive.endswith(".zip")
-want = {"README.md", "LICENSE", "CHANGELOG.md", "m65.exe" if windows else "m65"}
+want = {"INSTALL.txt", "README.md", "LICENSE", "CHANGELOG.md", "m65.exe" if windows else "m65"}
 # only the binary: "m65 install" creates the m65.CMD commands (links, or launchers on Windows)
 missing = sorted(want - files)
 if missing:
