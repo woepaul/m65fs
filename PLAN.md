@@ -456,8 +456,8 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
   links, or check them, themselves).
   * `m65 install`: creates the `m65.CMD` entries next to the running binary (its own path:
     `/proc/self/exe` or `ProcessHandle`): relative symlinks `m65.ls -> m65` on Linux and
-    macOS, `m65.ls.cmd` wrappers on Windows (as the release archive has them, including the
-    switch of the console to UTF-8 and back, see `tools/build-native.sh`). An existing
+    macOS, copies of the `m65.ls.exe` launcher on Windows (as the release archive has them, see
+    `src/main/windows/launcher.c` and `tools/build-native.sh`). An existing
     file of that name that is not an m65 link or wrapper is left alone (with a warning).
     Entries for commands that no longer exist (e.g. `m65.split`, renamed to `m65.dsplit`) are
     removed. Then, on Linux and macOS, `m65 completion install` (`--no-completion` to skip).
@@ -468,7 +468,7 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
     archive is built on that platform) can do the same; `--list-commands` stays for the
     archive check and for compatibility.
 * **Resources in the binary, compressed:** everything `m65 install` and `m65 completion` write
-  (the bash script, later zsh and fish, the Windows `.cmd` wrapper template) lives in one zip
+  (the bash script, later zsh and fish, the Windows launcher) lives in one zip
   resource (e.g. `io/github/paw/m65fs/install.zip`, built from `src/main/install/` at build
   time), read with `ZipInputStream`. native-image stores resources uncompressed, so this keeps
   the cost in the image to the compressed size. Check in the build: the image size before and

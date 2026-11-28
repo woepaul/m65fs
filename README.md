@@ -61,7 +61,7 @@ needed:
 |---|---|---|
 | Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
 | macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
-| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` and `bin\m65.ls.cmd`, `bin\m65.cp.cmd`, … |
+| Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` and `bin\m65.ls.exe`, `bin\m65.cp.exe`, … |
 
 Unpack it and put its `bin` directory on the `PATH`. On macOS the binary isn't signed; if it is
 blocked, `xattr -d com.apple.quarantine m65` allows it. `m65 --version` shows the version.

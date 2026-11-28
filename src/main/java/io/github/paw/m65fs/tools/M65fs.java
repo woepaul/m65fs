@@ -109,7 +109,7 @@ public final class M65fs {
 
   /**
    * argv[0] in the native image; {@code null} on the JVM (where it is always "java") and on
-   * Windows, where native images can't read it (there the m65.COMMAND.cmd wrappers pass the
+   * Windows, where native images can't read it (there the m65.COMMAND.exe launchers pass the
    * command as the first argument instead).
    */
   private static String programName() {

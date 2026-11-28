@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the native m65 binary with GraalVM native-image and links the m65.* commands to it:
 #   target/native/m65, target/native/m65.ls -> m65, m65.cp -> m65, ...
-# On Windows (Git Bash): target/native/m65.exe and m65.ls.cmd, m65.cp.cmd, ... wrappers.
+# On Windows (Git Bash): target/native/m65.exe and m65.ls.exe, m65.cp.exe, ... launchers.
 #
 # GraalVM: $GRAALVM_HOME, else the copy cached in ~/.cache/m65fs (downloaded and checksum-verified
 # on first use, GraalVM Community for JDK 25).
@@ -74,29 +74,26 @@ fi
 COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
 while IFS= read -r c; do COMMANDS+=("${c//$'\r'/}"); done < <("$BIN" --list-commands)
 [[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$BIN --list-commands gave no commands" >&2; exit 1; }
-# Windows: no symbolic links, a .cmd wrapper per command. m65 writes UTF-8, the console shows
-# its code page (usually 850 or 437: "SHIFT+£" came out as "SHIFT+┬ú"), so the wrapper switches
-# the console to UTF-8 (65001) for the command and back afterwards, keeping the exit status.
-# (-H:+AddAllCharsets did not help: the native image does not use the console's code page.)
-cmd_wrapper() {
-  printf '%s\r\n' \
-    '@echo off' \
-    'setlocal' \
-    'set "M65CP="' \
-    'for /f "tokens=2 delims=:" %%a in ('"'"'chcp'"'"') do set "M65CP=%%a"' \
-    'if defined M65CP set "M65CP=%M65CP: =%"' \
-    'if defined M65CP set "M65CP=%M65CP:.=%"' \
-    'chcp 65001 >nul' \
-    "\"%~dp0m65.exe\" $1 %*" \
-    'set "M65RC=%ERRORLEVEL%"' \
-    'if defined M65CP chcp %M65CP% >nul' \
-    'exit /b %M65RC%'
-}
+# Windows: no symbolic links, no exec(). Each command is a copy of a tiny launcher
+# (src/main/windows/launcher.c, kernel32 only, a few KB) that runs "m65.exe CMD ARGS" from its
+# own directory: no "Terminate batch job (Y/N)?" on Ctrl-C as with a .cmd wrapper, and the
+# console switched to UTF-8 for the command (m65 writes UTF-8; the console's code page, usually
+# 850 or 437, turned "SHIFT+£" into "SHIFT+┬ú"), passing on the exit status.
+if [[ $PLATFORM == windows-* ]]; then
+  rm -f "$OUT"/m65.*.cmd "$OUT"/m65.*.exe
+  cp "$HERE/src/main/windows/launcher.c" "$OUT/"
+  # (cl links by itself: Git Bash's /usr/bin/link would shadow MSVC's link.exe; "-" options,
+  # because MSYS rewrites arguments starting with "/" as paths)
+  (cd "$OUT" && cl -nologo -O1 -GS- -Zl -W3 launcher.c \
+      -link -entry:start -subsystem:console -nodefaultlib -opt:ref kernel32.lib -out:launcher.exe >/dev/null)
+  rm -f "$OUT/launcher.c" "$OUT/launcher.obj"
+fi
 for c in "${COMMANDS[@]}"; do
   if [[ $PLATFORM == windows-* ]]; then
-    cmd_wrapper "$c" > "$OUT/m65.$c.cmd"
+    cp "$OUT/launcher.exe" "$OUT/m65.$c.exe"
   else
     ln -sf m65 "$OUT/m65.$c"
   fi
 done
+[[ $PLATFORM == windows-* ]] && rm -f "$OUT/launcher.exe"
 echo "== done: $BIN and m65.{$(IFS=,; echo "${COMMANDS[*]}")}"

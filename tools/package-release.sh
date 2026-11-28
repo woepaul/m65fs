@@ -3,7 +3,7 @@
 #   target/dist/m65-VERSION-linux-amd64.tar.gz      bin/m65 and the bin/m65.* links
 #   target/dist/m65-VERSION-linux-aarch64.tar.gz
 #   target/dist/m65-VERSION-macos-aarch64.tar.gz
-#   target/dist/m65-VERSION-windows-amd64.zip       bin/m65.exe and the bin/m65.*.cmd wrappers
+#   target/dist/m65-VERSION-windows-amd64.zip       bin/m65.exe and the bin/m65.*.exe launchers
 # each in a directory m65-VERSION-PLATFORM/ with README.md, LICENSE and CHANGELOG.md.
 #
 # Usage: tools/package-release.sh VERSION   (prints the archive's path)
@@ -28,7 +28,7 @@ mkdir -p "$STAGE/bin"
 cp "$HERE/README.md" "$HERE/LICENSE" "$HERE/CHANGELOG.md" "$STAGE/"
 
 if [[ $P == windows-* ]]; then
-  cp "$HERE/target/native/m65.exe" "$HERE"/target/native/m65.*.cmd "$STAGE/bin/"
+  cp "$HERE/target/native/m65.exe" "$HERE"/target/native/m65.*.exe "$STAGE/bin/"
   rm -f "$DIST/$NAME.zip"
   if command -v 7z >/dev/null; then   # standard "/" separators (Compress-Archive writes "\")
     (cd "$DIST" && 7z a -tzip "$NAME.zip" "$NAME" >/dev/null)

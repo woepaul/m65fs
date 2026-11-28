@@ -22,7 +22,7 @@ use the copies in the project's `bin/` directory, `PROJECT/bin/m65.ls` etc., whe
 is the directory three levels above this file. They run the native binary when it is built
 (`tools/build-native.sh`, GraalVM) and otherwise the jar on Java 25+, building it on first
 use. `tools/install.sh` installs native tools into `~/.local/bin`; prebuilt binaries for Linux,
-macOS and Windows (there `m65.ls.cmd` etc.) are on the project's GitHub releases page.
+macOS and Windows (there `m65.ls.exe` etc.) are on the project's GitHub releases page.
 `m65 --version` prints the version.
 
 **Card paths:** `m65.cp` copies between this computer and the card, so card paths are written

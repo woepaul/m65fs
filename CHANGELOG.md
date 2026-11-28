@@ -13,6 +13,9 @@ Changes to m65fs, newest first, since 2026-11-24. A release turns "Unreleased" i
   long ones). A stalled transfer shows
   no estimate, an interrupted line stays as it was with `interrupted` added, and a finished
   line looks as before.
+- Windows: the commands are now small launchers (`m65.ls.exe`, `m65.cp.exe`, …, a few KB
+  each) instead of `.cmd` wrappers, so Ctrl-C no longer asks "Terminate batch job (Y/N)?". They
+  still switch the console to UTF-8 for the command and back, and pass on the exit status.
 
 ## 0.2.2 (2026-11-26)
 

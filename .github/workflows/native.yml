@@ -74,6 +74,10 @@ jobs:
           "$bin" --version
           "$bin" --list-commands
           "$bin" help > /dev/null
+          if [[ -f target/native/m65.ls.exe ]]; then   # the Windows launchers pass on args and status
+            target/native/m65.ls.exe --help | grep -q "usage: m65.ls"
+            if target/native/m65.ls.exe --no-such-option 2>/dev/null; then exit 1; fi
+          fi
           ls target/native
 
       - name: Package and check the archive
