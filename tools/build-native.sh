@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Builds the native m65 binary with GraalVM native-image and links the m65.* commands to it:
-#   target/native/m65, target/native/m65.ls -> m65, m65.cp -> m65, ...
-# On Windows (Git Bash): target/native/m65.exe (the launchers come from "m65 install").
+# Builds the native m65 binary with GraalVM native-image: target/native/m65 (Windows, in Git Bash:
+# target/native/m65.exe). "m65 install" then sets up the m65.* commands and completion.
 #
 # GraalVM: $GRAALVM_HOME, else the copy cached in ~/.cache/m65fs (downloaded and checksum-verified
 # on first use, GraalVM Community for JDK 25).
@@ -105,16 +104,6 @@ print("== all", len(os.listdir(sys.argv[2])), "blobs embedded")
 PY
 fi
 
-COMMANDS=()                     # (no mapfile: macOS ships bash 3.2)
-while IFS= read -r c; do COMMANDS+=("${c//$'\r'/}"); done < <("$BIN" --list-commands)
-[[ ${#COMMANDS[@]} -gt 0 ]] || { echo "$BIN --list-commands gave no commands" >&2; exit 1; }
-# Linux, macOS: the links (bin/m65.ls etc. run from here). Windows: none; "m65 install" writes
-# the m65.CMD.exe launchers from install.zip.
-if [[ $PLATFORM != windows-* ]]; then
-  for c in "${COMMANDS[@]}"; do
-    ln -sf m65 "$OUT/m65.$c"
-  done
-fi
 rm -f "$OUT/m65-image.jar"
 [[ $PLATFORM == windows-* ]] && rm -f "$OUT/launcher.exe"
-echo "== done: $BIN and m65.{$(IFS=,; echo "${COMMANDS[*]}")}"
+echo "== done: $BIN (\"m65 install\" sets up the m65.* commands and completion)"

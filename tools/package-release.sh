@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Packages the native binary built by tools/build-native.sh for a release:
-#   target/dist/m65-VERSION-linux-amd64.tar.gz      bin/m65 and the bin/m65.* links
+#   target/dist/m65-VERSION-linux-amd64.tar.gz      bin/m65 (m65 install creates the commands)
 #   target/dist/m65-VERSION-linux-aarch64.tar.gz
 #   target/dist/m65-VERSION-macos-aarch64.tar.gz
 #   target/dist/m65-VERSION-windows-amd64.zip       bin/m65.exe (m65 install creates the commands)
@@ -37,7 +37,7 @@ if [[ $P == windows-* ]]; then
   fi
   echo "$DIST/$NAME.zip"
 else
-  cp -P "$HERE/target/native/m65" "$HERE"/target/native/m65.* "$STAGE/bin/"   # -P: keep the links
+  cp "$HERE/target/native/m65" "$STAGE/bin/"   # the commands: bin/m65 install
   tar -C "$DIST" -czf "$DIST/$NAME.tar.gz" "$NAME"
   echo "$DIST/$NAME.tar.gz"
 fi

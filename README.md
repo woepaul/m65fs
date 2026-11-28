@@ -59,8 +59,8 @@ needed:
 
 | Platform | Archive | Contents |
 |---|---|---|
-| Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
-| macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
+| Linux amd64 / aarch64 | `m65-VERSION-linux-amd64.tar.gz`, `…-linux-aarch64.tar.gz` | `bin/m65` |
+| macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` |
 | Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` (`m65 install` creates `m65.ls.exe`, `m65.cp.exe`, …) |
 
 Unpack it and run **`bin/m65 install`** (Windows: `bin\m65.exe install`). It copies `m65` to
@@ -317,7 +317,7 @@ works too.
 
 ### Building the native binary
 
-`tools/build-native.sh` builds `target/native/m65` and the `m65.*` links. It uses
+`tools/build-native.sh` builds `target/native/m65` (`m65 install` sets up the commands). It uses
 `$GRAALVM_HOME`, or downloads GraalVM Community for JDK 25 once into `~/.cache/m65fs`
 (checksum-verified). The build takes about 15 s. The resources the binary needs (the MEGA65
 blobs) are listed in `META-INF/native-image/io.github.paw/m65fs/reachability-metadata.json`,
