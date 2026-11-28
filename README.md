@@ -63,14 +63,19 @@ needed:
 | macOS (Apple silicon) | `m65-VERSION-macos-aarch64.tar.gz` | `bin/m65` and the `bin/m65.*` links |
 | Windows amd64 | `m65-VERSION-windows-amd64.zip` | `bin\m65.exe` and `bin\m65.ls.exe`, `bin\m65.cp.exe`, … |
 
-Unpack it and put its `bin` directory on the `PATH`. On macOS the binary isn't signed; if it is
-blocked, `xattr -d com.apple.quarantine m65` allows it. `m65 --version` shows the version.
+Unpack it and run **`bin/m65 install`** (Windows: `bin\m65.exe install`). It copies `m65` to
+`~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\m65`), creates the `m65.*` commands there,
+installs bash completion and tells you if that directory still has to go on your `PATH` (with
+the line for your shell). `m65 install DIR` installs elsewhere, `--no-completion` skips the
+completion, and `m65 uninstall` removes exactly what was installed. On macOS the binary isn't
+signed; if it is blocked, `xattr -d com.apple.quarantine bin/m65` allows it. `m65 --version`
+shows the version.
 
 **The jar** (`m65fs-VERSION.jar`, on every platform with Java 25): `java -jar m65fs-VERSION.jar
 ls /` runs `m65.ls /`, and so on. It is also the library.
 
-**From source:** `tools/install.sh` builds the native binary and installs it with its links into
-`~/.local/bin` (`--jvm`: without GraalVM, running the jar).
+**From source:** `tools/install.sh` builds the native binary and runs `m65 install` (into
+`~/.local/bin`, or the directory given) (`--jvm`: without GraalVM, running the jar).
 
 ## What you need
 
@@ -294,7 +299,10 @@ The full set is `m65.ls`, `m65.tree`, `m65.cd`, `m65.pwd`, `m65.cp`, `m65.mv`, `
   each file tool; by default the MEGA65 keeps showing the transfer screen until `m65.reset`,
   `m65.boot` or `m65.run`).
 - **Exit status:** 0 ok, 1 error (`m65.defrag`: 1 = fragmented files remain, 2 = error).
-- **Tab completion (bash):** `eval "$(m65 completion bash)"`, e.g. in `~/.bashrc`. TAB then
+- **Tab completion (bash):** installed by `m65 install` (or alone: `m65 completion install`;
+  for the current shell: `eval "$(m65 completion bash)"`). It goes into bash-completion's user
+  directory, `~/.local/share/bash-completion/completions/`, or, without the bash-completion
+  package, as one marked line into `~/.bashrc`; `m65 completion uninstall` removes it. TAB then
   completes card paths like local ones: `m65:/PATH` in every tool, plain paths in the tools
   that use the card only (`m65.ls`, `m65.cd`, `m65.rm`, …). Where a tool reads a plain path as
   a local one (`m65.cp`, `m65.boot`, `m65.run`), plain paths complete locally. Options and

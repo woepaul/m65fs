@@ -79,6 +79,14 @@ jobs:
             if target/native/m65.ls.exe --no-such-option 2>/dev/null; then exit 1; fi
           fi
           ls target/native
+          # m65 install / uninstall into a scratch directory (Windows: the launchers from install.zip)
+          d=$(mktemp -d)/inst
+          "$bin" install --no-completion "$d"
+          ls "$d"
+          ls=$d/m65.ls; [[ -f $ls.exe ]] && ls=$ls.exe
+          "$ls" --help | grep -q "usage: m65.ls"
+          "$bin" uninstall "$d"
+          [[ -z "$(ls -A "$d")" ]]
 
       - name: Package and check the archive
         run: |

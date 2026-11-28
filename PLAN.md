@@ -477,6 +477,9 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
     `DIR/m65 install`. `tools/build-native.sh` and the release packaging (each platform's
     archive is built on that platform) can do the same; `--list-commands` stays for the
     archive check and for compatibility.
+* **Implemented 2026-11-28:** `m65 install|uninstall`, `m65 completion bash|install|uninstall`;
+  `install.zip` holds `m65.bash` everywhere and `launcher.exe` only in the Windows image
+  (assembled by `tools/build-native.sh`; on the JVM the loose files in `install/` are read).
 * **Resources in the binary, compressed:** everything `m65 install` and `m65 completion` write
   (the bash script, later zsh, fish and PowerShell, the Windows launcher) lives in one zip
   resource (e.g. `io/github/paw/m65fs/install.zip`, built from `src/main/install/` at build

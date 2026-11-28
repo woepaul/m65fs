@@ -169,6 +169,9 @@ public final class M65fs {
     if (!a.isEmpty() && a.getFirst().equals("completion")) {
       return completion(a);
     }
+    if (!a.isEmpty() && (a.getFirst().equals("install") || a.getFirst().equals("uninstall"))) {
+      return install(a);
+    }
     if (a.isEmpty() || a.getFirst().equals("help") || a.getFirst().equals("--help")) {
       usage(a.isEmpty() ? err : out);
       return a.isEmpty() ? 1 : 0;
@@ -1244,15 +1247,59 @@ public final class M65fs {
     return 0;
   }
 
-  /** {@code completion bash}: prints the bash completion script. */
+  /**
+   * {@code completion bash}: prints the bash completion script; {@code completion install} /
+   * {@code uninstall}: puts it in place for new shells, or takes it away.
+   */
   private int completion(List<String> a) {
     if (a.equals(List.of("completion", "bash"))) {
       out.print(Completion.bashScript(version()));
       out.flush();
       return 0;
     }
-    err.println("usage: m65 completion bash      (load it with: eval \"$(m65 completion bash)\")");
+    if (a.equals(List.of("completion", "install")) || a.equals(List.of("completion", "uninstall"))) {
+      try {
+        Installer i = installer();
+        return a.get(1).equals("install") ? i.completionInstall(self()) : i.completionUninstall();
+      } catch (IOException | RuntimeException e) {
+        err.println("m65: " + describe(e));
+        return 1;
+      }
+    }
+    err.println("usage: m65 completion bash|install|uninstall");
     return 1;
+  }
+
+  /** {@code install [--no-completion] [DIR]}, {@code uninstall [DIR]}: see {@link Installer}. */
+  private int install(List<String> a) {
+    String what = a.removeFirst();
+    boolean completion = !a.remove("--no-completion") || what.equals("uninstall");
+    if (a.size() > 1 || a.stream().anyMatch(x -> x.startsWith("-"))) {
+      err.println("usage: m65 install [--no-completion] [DIR]   |   m65 uninstall [DIR]");
+      return 1;
+    }
+    try {
+      Installer i = installer();
+      Path dir = a.isEmpty() ? i.defaultDir() : Path.of(a.getFirst());
+      return what.equals("install") ? i.install(dir, completion) : i.uninstall(dir);
+    } catch (IOException | RuntimeException e) {
+      err.println("m65: " + describe(e));
+      return 1;
+    }
+  }
+
+  private Installer installer() throws IOException {
+    return Installer.forThisComputer(self(), env, out, err);
+  }
+
+  /** The running native binary (install copies it); not available on the JVM. */
+  private static Path self() throws IOException {
+    if (!"runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"))) {
+      throw new IOException("install needs the native m65 binary (a release, or tools/build-native.sh); "
+          + "for the jar: tools/install.sh --jvm");
+    }
+    return Path.of(ProcessHandle.current().info().command()
+        .orElseThrow(() -> new IOException("cannot tell where the running m65 binary is"))).toRealPath();
   }
 
   /**
@@ -1681,10 +1728,14 @@ public final class M65fs {
           m65.peek ADDRESS_HEX [COUNT]        hex dump of memory (28-bit addresses)
           m65.discover                        print the MEGA65's address
 
-        shell
-          m65 completion bash                 bash tab completion, also for card paths (from
-                                              a running transfer helper only); load it with
-                                              eval "$(m65 completion bash)"
+        setup
+          m65 install [DIR]                   install m65, the m65.* commands and bash
+                                              completion (default ~/.local/bin; Windows:
+                                              %LOCALAPPDATA%\\Programs\\m65); --no-completion
+          m65 uninstall [DIR]                 remove exactly that again
+          m65 completion bash|install|uninstall
+                                              bash tab completion only, also for card paths
+                                              (from a running transfer helper only)
 
         environment
           M65_TARGET=fe80::...%eth0           MEGA65 address (default: found automatically
