@@ -325,6 +325,7 @@ library, not a best effort:
 | M8 ✅ | Defragmentation: scan report + optional fix, `Defrag` CLI (jar main class) | image tests + hardware (file fragmented on purpose) |
 | M9 ✅ | `m65.*` tools (coreutils style: ls/tree/cp/mv/rm/mkdir/cat/stat/df + boot/run/reset/mount/peek/discover/defrag), GraalVM native binary, agent skill in `.claude/skills/m65fs` | CLI tests on images + hardware (native) |
 | M10 | Bash tab completion for card paths (`m65:/abs/path`, `m65:rel/path`, and plain paths for card-only tools) and options; `m65 completion bash\|install\|uninstall`; `m65 install\|uninstall` creates or removes its own `m65.*` links (simpler `install.sh`), see §2.6 | completion tests (script driven by `COMP_*` variables, image-backed); hardware: TAB with and without a running helper |
+| M11 | Commodore disk images (D64, D71, D81) as a NIO `FileSystemProvider`, also on images inside the card's file system; tools look into and write into images, see §2.7 | image tests against VICE `c1541` reference images, both directions; hardware: `m65.ls`/`m65.cp` into a D81 on the card, the MEGA65 reads the result |
 
 M3 can be developed in parallel with M1/M2 since it only needs `ImageFileBlockDevice`.
 
@@ -492,6 +493,48 @@ Goal: TAB in bash completes card paths like local ones, in every tool that takes
   resource zip). To check on Windows: registration under `m65.ls` and/or `m65.ls.exe`, words
   starting with `m65:`, quoting of names with spaces. `cmd.exe` has no programmable
   completion (Clink would, but is a niche); Git Bash/MSYS2/WSL use the bash script.
+
+### 2.7 Commodore disk images (M11, planned)
+
+Goal: D64, D71 and D81 images as file systems, like zipfs for zip files, so that the tools and
+library users can look into and write into them, on the computer and directly on the card.
+
+* **Provider:** a `FileSystemProvider` over any `SeekableByteChannel`, so an image opens as a
+  local file or as a file inside m65fs (`Files.newByteChannel` on a `Mega65Path`), without
+  copying it first. Package e.g. `io.github.paw.m65fs.cbm`.
+* **Formats:** D64 (35 and 40 tracks), D71, D81, each with its own track/sector layout, BAM and
+  directory chain; D81 partitions as subdirectories (later, if needed). Images with error
+  bytes (D64 with 683 extra bytes) read, written back unchanged.
+* **File types:** PRG, SEQ, USR, DEL. REL and GEOS (VLIR) files are out entirely: not listed
+  as readable files, never written (they stay untouched in an image that is changed).
+* **Names:** PETSCII, 16 characters, padded with $A0. Shown as Unicode via
+  `tools/Petscii` (lower/upper case set by default), which then also needs the reverse
+  direction for writing; names that don't map back exactly must stay reachable (e.g. an
+  escape form). The file type as an attribute (and perhaps as a name suffix, `,s`/`,p`).
+* **What it enables:**
+  * `m65.ls m65:/c64/d81/game.d81/`, `m65.cat -p` of a SEQ file inside an image, completion
+    and wildcards into images;
+  * `m65.cp notes.seq m65:/LABS/labs.d81/`, creating new images (e.g. `m65.mkd81`);
+  * `m65.boot` of a named program inside an image, not only the first one;
+  * library users: `Files.walk`, search and extract over collections of images.
+* **Path syntax (decided 2026-11-28): an explicit separator**, `x.d81:FILE` (and `x.d81:` for
+  the image's directory), like `m65:` marks the card: each `:` is a file system boundary, and
+  they nest (`m65:/c64/d81/game.d81:INTRO`). `x.d81` alone is always the image file (copied,
+  moved, deleted as a whole), so nothing is ambiguous and the tools need not probe a file to
+  know that a word goes into an image. The boundary is a `:` right after a name ending in
+  `.d64`, `.d71` or `.d81` (any case), so `C:\`, the leading `m65:` and other local names with
+  `:` stay as they are. Completion (`x.d81:<TAB>`, bash's `:` word break handled as for
+  `m65:`) and wildcards (`x.d81:*`) work inside images. The syntax is for the command line;
+  library users open an image with `FileSystems.newFileSystem` and use its paths.
+  (Rejected: a plain path through the image, `.../x.d81/FILE`, where `x.d81` would be both a
+  file and a directory.)
+* **Write safety:** the BAM and directory stay consistent even if a transfer breaks off: changes
+  are buffered and written at close (as m65fs does for its own files), sectors of the
+  directory and BAM last. A D81 that the hypervisor has mounted is not changed behind its back
+  (refuse, or unmount first).
+* **Testing:** reference images made with VICE's `c1541` (create, write, read back); the
+  provider reads what `c1541` writes and the other way round. On hardware: the MEGA65 reads
+  a D81 written by the provider (DIR, LOAD, TYPE).
 
 ---
 
